@@ -1,0 +1,30 @@
+[
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/xml_com_android_vending_archive_opt_out.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/xml/com_android_vending_archive_opt_out.xml"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/drawable_ic_launcher.png.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/drawable/ic_launcher.png"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/drawable_new_dark_button_bg.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/drawable/new_dark_button_bg.xml"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/drawable_new_dark_button_selected.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/drawable/new_dark_button_selected.xml"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/layout_main_layout.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/layout/main_layout.xml"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/drawable_new_dark_button_disabled.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/drawable/new_dark_button_disabled.xml"
+    },
+    {
+        "merged": "com.atakmap.android.weartak_companion.plugin.app-civDebug-5:/drawable_btn_gray.xml.flat",
+        "source": "com.atakmap.android.weartak_companion.plugin.app-main-8:/drawable/btn_gray.xml"
+    }
+]

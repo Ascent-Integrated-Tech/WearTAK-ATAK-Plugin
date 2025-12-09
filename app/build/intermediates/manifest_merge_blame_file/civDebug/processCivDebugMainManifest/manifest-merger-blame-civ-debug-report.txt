@@ -1,0 +1,59 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.atakmap.android.weartak_companion.plugin"
+4    android:versionCode="1"
+5    android:versionName="0.1 () - [5.5.1]" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="21"
+9        android:targetSdkVersion="34" />
+10
+11    <application
+11-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:5:5-27:19
+12        android:allowBackup="false"
+12-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:6:9-36
+13        android:debuggable="true"
+14        android:description="@string/app_desc"
+14-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:9:9-47
+15        android:extractNativeLibs="true"
+16        android:icon="@drawable/ic_launcher"
+16-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:7:9-45
+17        android:label="@string/app_name"
+17-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:8:9-41
+18        android:testOnly="true"
+19        android:theme="@style/AppTheme" >
+19-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:10:9-40
+20        <meta-data
+21            android:name="plugin-api"
+21-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:11:20-45
+22            android:value="com.atakmap.app@5.5.1.CIV" />
+22-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:11:46-79
+23        <meta-data
+23-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:12:9-78
+24            android:name="app_desc"
+24-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:12:20-43
+25            android:value="@string/app_desc" />
+25-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:12:44-76
+26
+27        <!--
+28            This fictitious activity entry allow for ATAK 4.6.0.2 and newer to perform 
+29            plugin discovery  android devices.  If this is removed, the plugin will 
+30            not be able to be discovered or loaded.
+31        -->
+32        <activity
+32-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:18:8-24:19
+33            android:name="com.atakmap.app.component"
+33-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:18:18-58
+34            android:exported="true" >
+34-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:19:12-35
+35            <intent-filter android:label="@string/app_name" >
+35-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:21:12-23:28
+35-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:21:27-59
+36                <action android:name="com.atakmap.app.component" />
+36-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:22:15-66
+36-->/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:22:23-63
+37            </intent-filter>
+38        </activity>
+39    </application>
+40
+41</manifest>

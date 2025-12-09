@@ -1,0 +1,9 @@
+com.atakmap.android.weartak_companion.plugin.app-debug-0 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build-types/debug/res
+com.atakmap.android.weartak_companion.plugin.app-civ-1 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/generated/res/pngs/civ/debug
+com.atakmap.android.weartak_companion.plugin.app-civ-2 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/generated/res/resValues/civ/debug
+com.atakmap.android.weartak_companion.plugin.app-packageCivDebugResources-3 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/incremental/civDebug/packageCivDebugResources/merged.dir
+com.atakmap.android.weartak_companion.plugin.app-packageCivDebugResources-4 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/incremental/civDebug/packageCivDebugResources/stripped.dir
+com.atakmap.android.weartak_companion.plugin.app-civDebug-5 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/merged_res/civDebug/mergeCivDebugResources
+com.atakmap.android.weartak_companion.plugin.app-civ-6 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/civ/res
+com.atakmap.android.weartak_companion.plugin.app-civDebug-7 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/civDebug/res
+com.atakmap.android.weartak_companion.plugin.app-main-8 /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/res
