@@ -10,6 +10,9 @@ import android.widget.TextView;
 
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atak.plugins.impl.PluginLayoutInflater;
+import com.atakmap.android.maps.MapView;
+import com.atakmap.android.maps.Marker;
+import com.atakmap.coremap.maps.coords.GeoPoint;
 
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -40,6 +43,14 @@ public class PluginTemplate implements IPlugin {
     private BleCotBridge cotBridge;
     private boolean testCotSent = true;
 
+    private MapView mapView;
+    private Marker selfMarker;
+    private GeoPoint selfGeoPoint;
+    private String callsign;
+    private String team;
+    private Double selfLat;
+    private Double selfLon;
+
     public PluginTemplate(IServiceController serviceController) {
         this.serviceController = serviceController;
         final PluginContextProvider ctxProvider = serviceController
@@ -51,6 +62,8 @@ public class PluginTemplate implements IPlugin {
 
         // obtain the UI service
         uiService = serviceController.getService(IHostUIService.class);
+
+        mapView = MapView.getMapView();
 
         // initialize the toolbar button for the plugin
 
@@ -252,7 +265,7 @@ public class PluginTemplate implements IPlugin {
 
         // ---------- 1) Send STANDARD PLI immediately ----------
         Log.d(TAG, "sendTestCots: sending PLI immediately");
-        cotBridge.sendStandardPli(
+        /*cotBridge.sendStandardPli(
                 "WEARTAK_TEST_PLI_UID",
                 lat, lon, hae, ce, le,
                 "WearTAK test PLI from plugin",
@@ -263,13 +276,15 @@ public class PluginTemplate implements IPlugin {
                 1.5,
                 null,
                 null
-        );
+        );*/
+
+        cotBridge.sendStandardPli(buildStubMarkerEnvelopeJson());
 
         // ---------- 2) Send ALERT after 5 seconds ----------
         mainHandler.postDelayed(() -> {
             Log.d(TAG, "sendTestCots: sending ALERT after 5s delay");
 
-            cotBridge.sendEmergencyAlert(
+            /*cotBridge.sendEmergencyAlert(
                     "WEARTAK_TEST_ALERT_UID",
                     lat, lon, hae, ce, le,
                     "Ghost-1",
@@ -277,7 +292,9 @@ public class PluginTemplate implements IPlugin {
                     "TROOPS IN CONTACT",
                     "TIC",
                     "WEARTAK_TEST_PLI_UID"
-            );
+            );*/
+
+            cotBridge.sendEmergencyAlert(buildStubEmergencyAlertEnvelopeJson());
 
         }, 15000); // 5 seconds
 
@@ -287,13 +304,115 @@ public class PluginTemplate implements IPlugin {
         mainHandler.postDelayed(() -> {
             Log.d(TAG, "sendTestCots: sending CANCEL after 10s delay");
 
-            cotBridge.sendEmergencyCancel(
+            /*cotBridge.sendEmergencyCancel(
                     "WEARTAK_TEST_ALERT_UID",
                     lat, lon, hae, ce, le,
                     "Ghost-1"
-            );
+            );*/
+
+            cotBridge.sendEmergencyCancel(buildStubEmergencyCancelEnvelopeJson());
+
+        }, 30000); // 10 seconds total
+
+        mainHandler.postDelayed(() -> {
+            Log.d(TAG, "sendTestCots: sending CHAT after 10s delay");
+
+            /*cotBridge.sendEmergencyCancel(
+                    "WEARTAK_TEST_ALERT_UID",
+                    lat, lon, hae, ce, le,
+                    "Ghost-1"
+            );*/
+
+            cotBridge.sendChat(buildStubChatEnvelopeJson());
 
         }, 30000); // 10 seconds total
     }
+
+    private static String buildStubMarkerEnvelopeJson() {
+        return "{\n" +
+                "  \"proto_version\": 1,\n" +
+                "  \"msg_type\": \"marker\",\n" +
+                "  \"msg_id\": \"1dee7839-274c-433a-9052-c4ee8e7f0663\",\n" +
+                "  \"timestamp\": \"1765468601177\",\n" +
+                "  \"source\": \"wearos\",\n" +
+                "  \"payload\": {\n" +
+                "    \"alt\": 152.10000610351562,\n" +
+                "    \"battery_percent\": 100,\n" +
+                "    \"callsign\": \"WEAROS-1075\",\n" +
+                "    \"ce\": 17.749000549316406,\n" +
+                "    \"icon_path\": \"COT_MAPPING_2525C/a-f/a-f-G\",\n" +
+                "    \"lat\": 41.8867844,\n" +
+                "    \"le\": 0.6344082951545715,\n" +
+                "    \"lon\": -87.6672634,\n" +
+                "    \"marker_id\": \"1dee7839-274c-433a-9052-c4ee8e7f0663\",\n" +
+                "    \"marker_type\": \"a-f-G\",\n" +
+                "    \"time_stale\": \"2026-12-11T15:56:41.152Z\",\n" +
+                "    \"time_start\": \"2025-12-11T15:56:41.152Z\"\n" +
+                "  }\n" +
+                "}";
+    }
+
+    private static String buildStubEmergencyAlertEnvelopeJson() {
+        return "{\n" +
+                "  \"proto_version\": 1,\n" +
+                "  \"msg_type\": \"emergency\",\n" +
+                "  \"msg_id\": \"f211cb62-e200-467b-99a7-72ea84d501b7\",\n" +
+                "  \"timestamp\": \"2025-12-11T15:57:07.115199Z\",\n" +
+                "  \"source\": \"wearos\",\n" +
+                "  \"payload\": {\n" +
+                "    \"bat\": 100,\n" +
+                "    \"catg\": \"Manual SOS Alert\",\n" +
+                "    \"cs\": \"WEAROS-1075\",\n" +
+                "    \"desc\": \"SOS Alert Pressed by User\",\n" +
+                "    \"state\": \"ALERT\",\n" +
+                "    \"tStale\": \"2025-12-11T16:12:07.093Z\",\n" +
+                "    \"tStart\": \"2025-12-11T15:57:07.093Z\",\n" +
+                "    \"uid\": \"f211cb62-e200-467b-99a7-72ea84d501b7\"\n" +
+                "  }\n" +
+                "}";
+    }
+
+
+    private static String buildStubEmergencyCancelEnvelopeJson() {
+        return "{\n" +
+                "  \"proto_version\": 1,\n" +
+                "  \"msg_type\": \"emergency\",\n" +
+                "  \"msg_id\": \"f211cb62-e200-467b-99a7-72ea84d501b7\",\n" +
+                "  \"timestamp\": \"2025-12-11T16:00:07.115199Z\",\n" +
+                "  \"source\": \"wearos\",\n" +
+                "  \"payload\": {\n" +
+                "    \"bat\": 100,\n" +
+                "    \"catg\": \"Manual SOS Alert\",\n" +
+                "    \"cs\": \"WEAROS-1075\",\n" +
+                "    \"desc\": \"SOS Alert Pressed by User\",\n" +
+                "    \"state\": \"CANCEL\",\n" +
+                "    \"tStale\": \"2025-12-11T16:12:07.093Z\",\n" +
+                "    \"tStart\": \"2025-12-11T15:57:07.093Z\",\n" +
+                "    \"uid\": \"f211cb62-e200-467b-99a7-72ea84d501b7\"\n" +
+                "  }\n" +
+                "}";
+    }
+
+    private static String buildStubChatEnvelopeJson() {
+        return "{\n" +
+                "  \"proto_version\": 1,\n" +
+                "  \"msg_type\": \"chat\",\n" +
+                "  \"msg_id\": \"b7af2d3f-9e2a-4c6c-a9c7-1b9d27d1f8e1\",\n" +
+                "  \"timestamp\": \"2025-12-11T16:05:07.115199Z\",\n" +
+                "  \"source\": \"wearos\",\n" +
+                "  \"payload\": {\n" +
+                "    \"uid\": \"b7af2d3f-9e2a-4c6c-a9c7-1b9d27d1f8e1\",\n" +
+                "    \"roomUid\": \"WEARTAK_ROOM_001\",\n" +
+                "    \"roomTitle\": \"WearTAK Ops\",\n" +
+                "    \"msg\": \"WearTAK: test GeoChat message from watch envelope.\",\n" +
+                "    \"tStart\": \"2025-12-11T16:05:07.093Z\",\n" +
+                "    \"tStale\": \"2025-12-11T16:15:07.093Z\",\n" +
+                "    \"cs\": \"WEAROS-1075\",\n" +
+                "    \"hr\": 82,\n" +
+                "    \"bat\": 100\n" +
+                "  }\n" +
+                "}";
+    }
+
 
 }
