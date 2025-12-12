@@ -10,6 +10,7 @@ drawable ic_launcher
 drawable new_dark_button_bg
 drawable new_dark_button_disabled
 drawable new_dark_button_selected
+id connection_status
 layout main_layout
 string app_desc
 string app_name

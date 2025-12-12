@@ -1,7 +1,10 @@
-#Tue Dec 09 15:29:02 EAT 2025
-base.0=/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/dex/civDebug/mergeProjectDexCivDebug/0/classes.dex
-base.1=/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/dex/civDebug/mergeProjectDexCivDebug/11/classes.dex
-path.0=0/classes.dex
-path.1=11/classes.dex
+#Fri Dec 12 06:56:15 EAT 2025
+base.0=/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/dex/civDebug/mergeExtDexCivDebug/classes.dex
+base.1=/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/dex/civDebug/mergeProjectDexCivDebug/0/classes.dex
+base.2=/home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/build/intermediates/dex/civDebug/mergeProjectDexCivDebug/11/classes.dex
+path.0=classes.dex
+path.1=0/classes.dex
+path.2=11/classes.dex
 renamed.0=classes.dex
 renamed.1=classes2.dex
+renamed.2=classes3.dex

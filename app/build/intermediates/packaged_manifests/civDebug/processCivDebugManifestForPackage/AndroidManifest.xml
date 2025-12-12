@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.atakmap.android.weartak_companion.plugin"
-    android:versionCode="1"
-    android:versionName="0.1 () - [5.5.1]" >
+    android:versionCode="1765283461"
+    android:versionName="0.1 (3794b31a) - [5.5.1]" >
 
     <uses-sdk
         android:minSdkVersion="21"
         android:targetSdkVersion="34" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 
     <application
         android:allowBackup="false"
@@ -36,6 +39,14 @@
                 <action android:name="com.atakmap.app.component" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
     </application>
 
 </manifest>
