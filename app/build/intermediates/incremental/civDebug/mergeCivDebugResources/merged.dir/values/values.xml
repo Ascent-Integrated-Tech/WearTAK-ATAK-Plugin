@@ -34,7 +34,7 @@
     <string name="common_open_on_phone">Open on phone</string>
     <string name="common_signin_button_text">Sign in</string>
     <string name="common_signin_button_text_long">Sign in with Google</string>
-    <string name="versionName" translatable="false">0.1 (c62921c8) - [5.5.1]</string>
+    <string name="versionName" translatable="false">0.1 (4b848f0c) - [5.5.1]</string>
     <style name="ATAKEditText" parent="@android:style/Widget.EditText">
         
         

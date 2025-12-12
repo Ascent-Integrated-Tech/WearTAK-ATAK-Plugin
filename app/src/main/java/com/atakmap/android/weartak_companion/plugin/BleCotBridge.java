@@ -3,6 +3,7 @@ package com.atakmap.android.weartak_companion.plugin;
 import android.os.Build;
 import android.util.Log;
 
+import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.Marker;
@@ -22,11 +23,13 @@ public class BleCotBridge {
     private static final String TAG = "BleCotBridge";
 
     private final CotDispatcher externalCotDispatcher;
+    private final CotDispatcher internalCotDispatcher;
 
     private MapView mapView;
 
     public BleCotBridge() {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
+        internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
         mapView = MapView.getMapView();
         Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
     }
@@ -53,7 +56,7 @@ public class BleCotBridge {
             String stale = optString(p, "time_stale", iso8601(System.currentTimeMillis() + 120000));
 
             // callsign/remarks/group/track: if not present, use safe defaults
-            String callsign = mapView.getDeviceCallsign();
+            String callsign  = optString(p, "callsign", "WEAROS-TEST");
             String remarks  = optString(p, "remarks", "WearTAK PLI");
             String role     = optString(p, "role", "member");
             String teamValue= optString(p, "team", "Blue");
@@ -93,7 +96,7 @@ public class BleCotBridge {
     // =========================================================================================
     // 2) EMERGENCY ALERT (JSON envelope input)
     // =========================================================================================
-    public void sendEmergencyAlert(String envelopeJson) {
+    /*public void sendEmergencyAlert(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -109,7 +112,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign = mapView.getDeviceCallsign();
+            String callsign  = optString(p, "callsign", "WEAROS-TEST");
             String catg     = optString(p, "catg", "Manual SOS Alert");
             String desc     = optString(p, "desc", "SOS Alert");
 
@@ -149,6 +152,91 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
         }
+    }*/
+
+    public void sendEmergencyAlert(String envelopeJson) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+            JSONObject p = env.optJSONObject("payload");
+            if (p == null) {
+                Log.w(TAG, "sendEmergencyAlert: missing payload");
+                return;
+            }
+
+            String uid = optString(p, "uid",
+                    optString(env, "msg_id", UUID.randomUUID().toString()));
+
+            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
+            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
+
+            String callsign = optString(p, "callsign", "WEAROS-TEST");
+            String catg     = optString(p, "catg", "Manual SOS Alert");
+            String desc     = optString(p, "desc", "SOS Alert");
+
+            int bat = optInt(p, "bat", -1);
+
+            // Self info for link (required by Emergency ingest)
+            String selfUid    = mapView.getSelfMarker().getUID();
+            String deviceType = mapView.getMapData().getMetaString(
+                    "deviceType",
+                    mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
+
+            // Point: use EUD location
+            EudFix fix = getEudFix();
+
+            StringBuilder detail = new StringBuilder();
+            detail.append("<detail>");
+
+            // Emergency payload
+            detail.append("<emergency type='").append(escapeXml(desc)).append("'>")
+                    .append(escapeXml(callsign)).append("</emergency>");
+
+            // Contact (display)
+            detail.append("<contact callsign='")
+                    .append(escapeXml(callsign)).append("&#10;").append(escapeXml(catg))
+                    .append("'/>");
+
+            // REQUIRED for EmergencyAlertReceiver: link to the sender item
+            detail.append("<link uid='").append(escapeXml(selfUid))
+                    .append("' type='").append(escapeXml(deviceType))
+                    .append("' relation='p-p'/>");
+
+            if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
+            detail.append("<usericon iconsetpath='911 Alert'/>");
+            detail.append("<color argb='-1'/>");
+            detail.append("</detail>");
+
+            String xml =
+                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                            + "<event version='2.0' uid='" + escapeXml(uid) + "' type='b-a-o' "
+                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale)
+                            + "' how='h-e' access='Undefined'>"
+                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
+                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
+                            + detail
+                            + "</event>";
+
+            Log.d(TAG, "Emergency ALERT XML:\n" + xml);
+
+            // Parse and dispatch
+            com.atakmap.coremap.cot.event.CotEvent evt = com.atakmap.coremap.cot.event.CotEvent.parse(xml);
+
+            // 1) Inject into internal pipeline so Emergency UI/marker are created
+            internalCotDispatcher.dispatch(evt);
+
+            // 2) Also send externally (network)
+            externalCotDispatcher.dispatch(evt);
+
+            // Optional fallback internal injection via import intent:
+            // android.content.Intent i = new android.content.Intent(
+            //         com.atakmap.android.importexport.ImportExportMapComponent.IMPORT_COT);
+            // i.putExtra("event", evt);
+            // com.atakmap.android.ipc.AtakBroadcast.getInstance().sendBroadcast(i);
+
+            Log.d(TAG, "EMERGENCY ALERT SENT");
+        } catch (Exception e) {
+            Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
+        }
     }
 
     // =========================================================================================
@@ -169,7 +257,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign = mapView.getDeviceCallsign();
+            String callsign  = optString(p, "callsign", "WEAROS-TEST");
 
             EudFix fix = getEudFix();
 
@@ -194,10 +282,24 @@ public class BleCotBridge {
         }
     }
 
+
+    public void sendChatViaAPI(String text) {
+        // All Chat Rooms contact (broadcast)
+        com.atakmap.android.contact.Contact all =
+                com.atakmap.android.chat.ChatManagerMapComponent.getChatBroadcastContact();
+
+        java.util.List<com.atakmap.android.contact.Contact> convos =
+                java.util.Collections.singletonList(all);
+
+        com.atakmap.android.chat.ChatManagerMapComponent.getInstance()
+                .sendMessage(text, convos);
+    }
+
+
     // =========================================================================================
 // 4) CHAT (GeoChat) (JSON envelope input)
 // =========================================================================================
-    public void sendChat(String envelopeJson) {
+    /*public void sendChat(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -211,7 +313,7 @@ public class BleCotBridge {
             String roomUid   = optString(p, "roomUid", "WEARTAK_ROOM");
             String roomTitle = optString(p, "roomTitle", roomUid);
             String msg       = optString(p, "msg", "");
-            String cs        = optString(p, "cs", "WearTAK");
+            String callsign  = optString(p, "callsign", "WEAROS-TEST");
 
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 600000)); // +10 min
@@ -241,8 +343,8 @@ public class BleCotBridge {
             detail.append("<__chat")
                     .append(" id='").append(escapeXml(roomUid)).append("'")
                     .append(" chatroom='").append(escapeXml(roomTitle)).append("'")
-                    .append(" senderCallsign='").append(escapeXml(cs)).append("'")
-                    .append(" senderUid='").append(escapeXml(cs)).append("'")
+                    .append(" senderCallsign='").append(escapeXml(callsign)).append("'")
+                    .append(" senderUid='").append(escapeXml(callsign)).append("'")
                     .append(" groupOwner='false'")
                     .append(">");
             detail.append(escapeXml(msg));
@@ -266,8 +368,111 @@ public class BleCotBridge {
 
             Log.d(TAG, "GeoChat XML:\n" + xml);
 
-            dispatchExternal("CHAT", xml);
+            //dispatchExternal("CHAT", xml);
 
+            CotEvent chatEvent = CotEvent.parse(xml);
+            ChatMessageParser chatMessageParser = new ChatMessageParser(mapView);
+            chatMessageParser.parseCotEvent(chatEvent);
+
+            externalCotDispatcher.dispatchToBroadcast(chatEvent);
+
+            Log.d(TAG, "CHAT SENT");
+
+            sendChatViaAPI(msg);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in sendChat(json)", e);
+        }
+    }*/
+
+
+    public void sendChat(String envelopeJson) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+            JSONObject p = env.optJSONObject("payload");
+            if (p == null) { Log.w(TAG, "sendChat: missing payload"); return; }
+
+            String msgUid    = optString(p, "uid", optString(env, "msg_id", UUID.randomUUID().toString()));
+            String roomUid   = optString(p, "roomUid", "WEARTAK_ROOM");
+            String roomTitle = optString(p, "roomTitle", roomUid);
+            String msg       = optString(p, "msg", "");
+            String callsign  = optString(p, "callsign", "WEAROS-TEST");
+
+            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
+            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 600000));
+
+            int bat = optInt(p, "bat", -1);
+            int hr  = optInt(p, "hr", -1);
+
+            // Self info
+            String selfUid = mapView.getSelfMarker().getUID();
+            String deviceType = mapView.getMapData().getMetaString("deviceType", "a-f");
+
+            // Event UID must follow GeoChat pattern so Chat can parse sender/room
+            String eventUid = "GeoChat." + selfUid + "." + roomUid + "." + msgUid;
+
+            EudFix fix = getEudFix();
+
+            StringBuilder detail = new StringBuilder();
+            detail.append("<detail>");
+
+            if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
+            if (hr >= 0)  detail.append("<sensor hr='").append(hr).append("'/>");
+
+            // __chat block with messageId and chatgrp
+            detail.append("<__chat")
+                    .append(" id='").append(escapeXml(roomUid)).append("'")
+                    .append(" messageId='").append(escapeXml(msgUid)).append("'")
+                    .append(" chatroom='").append(escapeXml(roomTitle)).append("'")
+                    .append(" senderCallsign='").append(escapeXml(callsign)).append("'")
+                    .append(" groupOwner='false'>");
+
+            // Chat group membership (at least self)
+            detail.append("<chatgrp id='").append(escapeXml(roomUid)).append("'")
+                    .append(" uid0='").append(escapeXml(selfUid)).append("'/>");
+
+            detail.append("</__chat>");
+
+            // Link back to sender
+            detail.append("<link uid='").append(escapeXml(selfUid)).append("'")
+                    .append(" type='").append(escapeXml(deviceType)).append("'")
+                    .append(" relation='p-p'/>");
+
+            // Message content goes in <remarks>
+            detail.append("<remarks source='BAO.F.ATAK.")
+                    .append(escapeXml(selfUid))
+                    .append("' time='").append(escapeXml(time)).append("'>")
+                    .append(escapeXml(msg))
+                    .append("</remarks>");
+
+            detail.append("</detail>");
+
+            String xml =
+                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                            + "<event version='2.0'"
+                            + " uid='" + escapeXml(eventUid) + "'"
+                            + " type='b-t-f'"
+                            + " time='" + escapeXml(time) + "'"
+                            + " start='" + escapeXml(time) + "'"
+                            + " stale='" + escapeXml(stale) + "'"
+                            + " how='h-g-i-g-o'>"
+                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
+                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
+                            + detail
+                            + "</event>";
+
+            Log.d(TAG, "GeoChat XML:\n" + xml);
+
+            CotEvent chatEvent = CotEvent.parse(xml);
+
+            // Optional: verify Chat can parse before send (useful during dev)
+            ChatMessageParser parser = new ChatMessageParser(mapView);
+            parser.parseCotEvent(chatEvent);
+
+            // Broadcast on GeoChat multicast
+            externalCotDispatcher.dispatchToBroadcast(chatEvent);
+
+            Log.d(TAG, "CHAT SENT");
         } catch (Exception e) {
             Log.e(TAG, "Error in sendChat(json)", e);
         }
