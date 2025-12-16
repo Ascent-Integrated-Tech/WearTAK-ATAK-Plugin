@@ -1,8 +1,8 @@
 1<?xml version="1.0" encoding="utf-8"?>
 2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 3    package="com.atakmap.android.weartak_companion.plugin"
-4    android:versionCode="1765519175"
-5    android:versionName="0.1 (4b848f0c) - [5.5.1]" >
+4    android:versionCode="1765540282"
+5    android:versionName="0.1 (b6b06065) - [5.5.1]" >
 6
 7    <uses-sdk
 8        android:minSdkVersion="21"

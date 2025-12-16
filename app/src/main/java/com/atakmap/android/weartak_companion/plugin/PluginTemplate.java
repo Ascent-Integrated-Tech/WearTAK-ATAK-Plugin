@@ -362,7 +362,7 @@ public class PluginTemplate implements IPlugin {
                 "  \"payload\": {\n" +
                 "    \"bat\": 100,\n" +
                 "    \"catg\": \"Manual SOS Alert\",\n" +
-                "    \"cs\": \"WEAROS-1075\",\n" +
+                "    \"callsign\": \"WEAROS-1075\",\n" +
                 "    \"desc\": \"SOS Alert Pressed by User\",\n" +
                 "    \"state\": \"ALERT\",\n" +
                 "    \"tStale\": \"2025-12-11T16:12:07.093Z\",\n" +
@@ -402,7 +402,7 @@ public class PluginTemplate implements IPlugin {
                 "  \"source\": \"wearos\",\n" +
                 "  \"payload\": {\n" +
                 "    \"uid\": \"b7af2d3f-9e2a-4c6c-a9c7-1b9d27d1f8e1\",\n" +
-                "    \"roomUid\": \"WEARTAK_ROOM_001\",\n" +
+                "    \"roomUid\": \"All Chat Rooms\",\n" +
                 "    \"roomTitle\": \"WearTAK Ops\",\n" +
                 "    \"msg\": \"WearTAK: test GeoChat message from watch envelope.\",\n" +
                 "    \"tStart\": \"2025-12-11T16:05:07.093Z\",\n" +

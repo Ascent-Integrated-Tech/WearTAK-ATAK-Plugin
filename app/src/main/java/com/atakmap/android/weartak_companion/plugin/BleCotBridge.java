@@ -37,7 +37,7 @@ public class BleCotBridge {
     // =========================================================================================
     // 1) STANDARD PLI (JSON envelope input)
     // =========================================================================================
-    public void sendStandardPli(String envelopeJson) {
+    /*public void sendStandardPli(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -48,7 +48,7 @@ public class BleCotBridge {
 
             // ----- Pull values from JSON (fall back safely) -----
             // uid: prefer payload.marker_id if present (watch marker envelope), else msg_id, else random
-            String uid = optString(p, "marker_id",
+            String uid = optString(p, "callsign",
                     optString(env, "msg_id", UUID.randomUUID().toString()));
 
             // time/start/stale: prefer payload.time_start/time_stale else now/+2min
@@ -91,7 +91,108 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "Error in sendStandardPli(json)", e);
         }
+    }*/
+
+
+    public void sendStandardPli(String envelopeJson) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+            JSONObject p = env.optJSONObject("payload");
+            if (p == null) {
+                Log.w(TAG, "sendStandardPli: missing payload");
+                return;
+            }
+
+            // ----- Identity (MUST be stable and NOT the phone) -----
+            // uid: prefer payload.marker_id, else env.msg_id, else random
+            String uid = optString(p, "marker_id",
+                    optString(env, "msg_id", UUID.randomUUID().toString()));
+
+            // time/start/stale: prefer payload.time_start/time_stale else now/+2min
+            String time  = optString(p, "time_start", iso8601(System.currentTimeMillis()));
+            String stale = optString(p, "time_stale", iso8601(System.currentTimeMillis() + 120000));
+
+            // callsign + optional extras
+            String callsign   = optString(p, "callsign", "WEAROS-TEST");
+            String remarks    = optString(p, "remarks", "WearTAK PLI");
+            String role       = optString(p, "role", "member");
+            String teamValue  = optString(p, "team", "Blue");
+
+            double courseDeg = optDouble(p, "course", 0.0);
+            double speedMps  = optDouble(p, "speed", 0.0);
+
+            // NEW: battery + HR (optional)
+            // Marker payload currently uses "battery_percent"; HR key depends on your payload design.
+            // We'll support "battery_percent"/"bat" and "hr"/"heart_rate"/"heartRateBpm".
+            Integer batteryPct = optIntNullable(p, "battery_percent");
+            if (batteryPct == null) batteryPct = optIntNullable(p, "bat");
+
+            Integer hrBpm = optIntNullable(p, "hr");
+            if (hrBpm == null) hrBpm = optIntNullable(p, "heart_rate");
+            if (hrBpm == null) hrBpm = optIntNullable(p, "heartRateBpm");
+
+            // Point: v1 uses ATAK EUD location
+            EudFix fix = getEudFix();
+            double lat = fix.lat, lon = fix.lon, hae = fix.hae, ce = fix.ce, le = fix.le;
+
+            StringBuilder detail = new StringBuilder();
+            detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>")
+                    .append("<contact endpoint='*:-1:stcp' callsign='").append(escapeXml(callsign)).append("'/>")
+                    .append("<__group role='").append(escapeXml(role)).append("' name='").append(escapeXml(teamValue)).append("'/>")
+                    .append("<track course='").append(trimDouble(courseDeg)).append("' speed='").append(trimDouble(speedMps)).append("'/>");
+
+            // Battery in <status battery=".."/>
+            if (batteryPct != null) {
+                int b = Math.max(0, Math.min(100, batteryPct));
+                detail.append("<status battery='").append(b).append("'/>");
+            }
+
+            // HR as custom physio tag (ATAK will preserve unknown tags)
+            if (hrBpm != null && hrBpm > 0) {
+                detail.append("<physio hr='").append(hrBpm).append("'/>");
+            }
+
+            String xml =
+                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                            + "<event version='2.0' uid='" + escapeXml(uid) + "' type='a-f-G-U-C' "
+                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale) + "' how='h-g-i-g-o'>"
+                            + "<point lat='" + String.format("%.6f", lat)
+                            + "' lon='" + String.format("%.6f", lon)
+                            + "' hae='" + String.format("%.1f", hae)
+                            + "' ce='" + trimDouble(ce) + "' le='" + trimDouble(le) + "'/>"
+                            + "<detail>"
+                            + detail
+                            + "</detail>"
+                            + "</event>";
+
+            Log.d(TAG, "Standard PLI XML:\n" + xml);
+
+            dispatchExternal("PLI", xml);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in sendStandardPli(json)", e);
+        }
     }
+
+    /** Returns Integer if key exists and is parseable as int, else null. */
+    private Integer optIntNullable(JSONObject o, String key) {
+        if (o == null || key == null) return null;
+        if (!o.has(key) || o.isNull(key)) return null;
+
+        try {
+            Object v = o.get(key);
+            if (v instanceof Number) return ((Number) v).intValue();
+            if (v instanceof String) {
+                String s = ((String) v).trim();
+                if (s.isEmpty()) return null;
+                return (int) Double.parseDouble(s); // supports "87" or "87.0"
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+
 
     // =========================================================================================
     // 2) EMERGENCY ALERT (JSON envelope input)
@@ -176,7 +277,7 @@ public class BleCotBridge {
             int bat = optInt(p, "bat", -1);
 
             // Self info for link (required by Emergency ingest)
-            String selfUid    = mapView.getSelfMarker().getUID();
+            String selfUid = optString(p, "uid", "WEAROS-UNKNOWN");
             String deviceType = mapView.getMapData().getMetaString(
                     "deviceType",
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
@@ -386,7 +487,7 @@ public class BleCotBridge {
     }*/
 
 
-    public void sendChat(String envelopeJson) {
+    /*public void sendChat(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -476,7 +577,173 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "Error in sendChat(json)", e);
         }
+    }*/
+
+
+    public void sendChat(String envelopeJson) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+            JSONObject p = env.optJSONObject("payload");
+            if (p == null) {
+                Log.w(TAG, "sendChat: missing payload");
+                return;
+            }
+
+            // -------------------------------
+            // Parse payload (watch envelope)
+            // -------------------------------
+            // Message id (used as messageId and last segment of GeoChat UID)
+            String msgUid = optString(p, "uid",
+                    optString(env, "msg_id", UUID.randomUUID().toString()));
+
+            // Destination identity
+            // In your watch schema: roomUid = chat room id, roomTitle = display title
+            // The working WearOS XML uses:
+            //   dstUid     -> __chat id / remarks to / GeoChat UID segment #3
+            //   dstChatroom-> __chat chatroom / <marti><dest callsign='...'/>
+            //
+            // So we map:
+            //   dstUid      = roomUid
+            //   dstChatroom = roomTitle
+            //
+            String dstUid      = optString(p, "roomUid", "All Chat Rooms");
+            String dstChatroom = optString(p, "roomTitle", dstUid);
+
+            // Message text
+            String chatMsg = optString(p, "msg", "");
+
+            // Sender callsign comes from payload.cs in your earlier watch examples
+            // (Your stub used "cs", not "callsign".)
+            String senderCallsign = optString(p, "cs",
+                    optString(p, "callsign", "WEAROS-TEST"));
+
+            // Time/stale fields match your watch schema
+            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
+            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 10_000));
+
+            // Optional diagnostics
+            int bat = optInt(p, "bat", -1);
+            int hr  = optInt(p, "hr", -1);
+
+            // -------------------------------
+            // Self identity (ATAK device)
+            // -------------------------------
+            String selfUid = optString(p, "uid", "WEAROS-UNKNOWN");
+            /*try {
+                if (mapView != null && mapView.getSelfMarker() != null) {
+                    selfUid = mapView.getSelfMarker().getUID();
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "sendChat: could not read self UID", t);
+            }*/
+            //if (selfUid == null) selfUid = "ANDROID-UNKNOWN";
+
+            // -------------------------------
+            // Build GeoChat UID (canonical)
+            // GeoChat.<senderUid>.<dstUid>.<msgId>
+            // -------------------------------
+            String eventUid = "GeoChat." + selfUid + "." + dstUid + "." + msgUid;
+
+            // -------------------------------
+            // Point: match WearOS style (0/0 + huge errors)
+            // This avoids coupling chat to GPS, and matches your working sample.
+            // -------------------------------
+            double lat = 0.0, lon = 0.0, hae = 999999.0, ce = 999999.0, le = 999999.0;
+
+            // -------------------------------
+            // Build <detail> exactly like WearOS
+            // -------------------------------
+            StringBuilder detail = new StringBuilder();
+            detail.append("<detail>");
+
+            // (Optional) keep these if you want, but WearOS chat example doesn't include them.
+            // Leave them out to match sample more closely.
+            // if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
+            // if (hr >= 0)  detail.append("<sensor hr='").append(hr).append("'/>");
+
+            // __chat block (match WearOS)
+            detail.append("<__chat")
+                    .append(" parent='RootContactGroup'")
+                    .append(" groupOwner='false'")
+                    .append(" messageId='").append(escapeXml(msgUid)).append("'")
+                    .append(" chatroom='").append(escapeXml(dstChatroom)).append("'")
+                    .append(" id='").append(escapeXml(dstUid)).append("'")
+                    .append(" senderCallsign='").append(escapeXml(senderCallsign)).append("'>");
+
+            // chatgrp (match WearOS)
+            detail.append("<chatgrp")
+                    .append(" uid0='").append(escapeXml(selfUid)).append("'")
+                    .append(" uid1='").append(escapeXml(dstUid)).append("'")
+                    .append(" id='").append(escapeXml(dstUid)).append("'")
+                    .append("/>");
+
+            detail.append("</__chat>");
+
+            // link back to sender PLI (match WearOS)
+            detail.append("<link uid='").append(escapeXml(selfUid))
+                    .append("' type='a-f-G-U-C' relation='p-p'/>");
+
+            // remarks carries the message text (match WearOS)
+            detail.append("<remarks")
+                    .append(" source='").append(escapeXml(selfUid)).append("'")
+                    .append(" to='").append(escapeXml(dstUid)).append("'")
+                    .append(" time='").append(escapeXml(time)).append("'>")
+                    .append(escapeXml(chatMsg))
+                    .append("</remarks>");
+
+            // marti routing: OMIT when sending to All Chat Rooms (match WearOS logic)
+            if (!"All Chat Rooms".equalsIgnoreCase(dstUid)) {
+                detail.append("<marti><dest callsign='")
+                        .append(escapeXml(dstChatroom))
+                        .append("'/></marti>");
+            }
+
+            detail.append("</detail>");
+
+            // -------------------------------
+            // Build full CoT
+            // -------------------------------
+            String xml =
+                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                            + "<event version='2.0'"
+                            + " uid='" + escapeXml(eventUid) + "'"
+                            + " type='b-t-f'"
+                            + " time='" + escapeXml(time) + "'"
+                            + " start='" + escapeXml(time) + "'"
+                            + " stale='" + escapeXml(stale) + "'"
+                            + " how='h-g-i-g-o'"
+                            + " access='Undefined'>"
+                            + "<point lat='" + lat + "' lon='" + lon + "' hae='" + hae
+                            + "' ce='" + ce + "' le='" + le + "'/>"
+                            + detail
+                            + "</event>";
+
+            Log.d(TAG, "GeoChat XML:\n" + xml);
+
+            CotEvent chatEvent = CotEvent.parse(xml);
+
+            // Local verification: this should populate ATAK chat UI locally
+            try {
+                ChatMessageParser parser = new ChatMessageParser(mapView);
+                parser.parseCotEvent(chatEvent);
+                Log.d(TAG, "ChatMessageParser: parsed OK");
+            } catch (Throwable t) {
+                Log.w(TAG, "ChatMessageParser parse failed (still attempting send)", t);
+            }
+
+            // Network send (broadcast). Note: this can still be intercepted by other plugins.
+            if (externalCotDispatcher != null) {
+                externalCotDispatcher.dispatchToBroadcast(chatEvent);
+                Log.d(TAG, "CHAT SENT (broadcast)");
+            } else {
+                Log.w(TAG, "externalCotDispatcher is null, not sending");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in sendChat(json)", e);
+        }
     }
+
 
 
     // =========================================================================================
