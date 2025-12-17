@@ -6,6 +6,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.ListView;
 import android.widget.TextView;
 
 import com.atak.plugins.impl.PluginContextProvider;
@@ -14,6 +17,8 @@ import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.Marker;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 
 import gov.tak.api.plugin.IPlugin;
@@ -34,11 +39,16 @@ public class PluginTemplate implements IPlugin {
     Pane templatePane;
     private TextView connectionStatusTV;
     private String connectionStatus = "DISCONNECTED";
+    private ListView connectionsListview;
+    private Button scanButton;
 
     private static final String TAG = "PluginTemplate";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WearTakBleClient bleClient;
+
+    private final java.util.ArrayList<WearTakBleClient.DiscoveredDevice> scannedDevices =
+            new java.util.ArrayList<>();
 
     private BleCotBridge cotBridge;
     private boolean testCotSent = true;
@@ -50,6 +60,12 @@ public class PluginTemplate implements IPlugin {
     private String team;
     private Double selfLat;
     private Double selfLon;
+
+    private ArrayAdapter<String> connectionsAdapter;
+
+    private static final List<String> FRUITS = Arrays.asList(
+            "Apple", "Banana", "Mango", "Orange", "Pineapple"
+    );
 
     public PluginTemplate(IServiceController serviceController) {
         this.serviceController = serviceController;
@@ -134,8 +150,41 @@ public class PluginTemplate implements IPlugin {
             cotBridge = new BleCotBridge();
         }
 
-        Log.d(TAG, "onStart: sending test CoTs");
-        sendTestCots();
+        //Log.d(TAG, "onStart: sending test CoTs");
+        //sendTestCots();
+
+        bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
+            @Override
+            public void onReady() {
+                Log.d(TAG, "BLE ready; JSON notifications enabled");
+                mainHandler.post(() -> {
+                    if (connectionStatusTV != null) {
+                        connectionStatusTV.setText("CONNECTED (READY)");
+                        connectionStatusTV.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+
+            @Override
+            public void onJson(String jsonLine) {
+                Log.d(TAG, "RX JSON: " + jsonLine);
+                if (cotBridge != null) {
+                    cotBridge.handleJsonFromWearTak(jsonLine); // routing by msg_type
+                }
+            }
+
+            @Override
+            public void onError(String msg) {
+                Log.w(TAG, "BLE JSON error: " + msg);
+                mainHandler.post(() -> {
+                    if (connectionStatusTV != null) {
+                        connectionStatusTV.setText("BLE ERROR: " + msg);
+                        connectionStatusTV.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        });
+
     }
 
 
@@ -162,8 +211,7 @@ public class PluginTemplate implements IPlugin {
 
             View paneView = PluginLayoutInflater.inflate(pluginContext, R.layout.main_layout, null);
 
-            templatePane = new PaneBuilder(PluginLayoutInflater.inflate(pluginContext,
-                    R.layout.main_layout, null))
+            templatePane = new PaneBuilder(paneView)
                     // relative location is set to default; pane will switch location dependent on
                     // current orientation of device screen
                     .setMetaValue(Pane.RELATIVE_LOCATION, Pane.Location.Default)
@@ -175,18 +223,114 @@ public class PluginTemplate implements IPlugin {
 
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             connectionStatusTV.setText(connectionStatus);
+
+            connectionsListview = paneView.findViewById(R.id.availableConnections);
+            connectionsAdapter = new ArrayAdapter<>(
+                    pluginContext,
+                    android.R.layout.simple_list_item_1
+            );
+            connectionsListview.setAdapter(connectionsAdapter);
+
+            connectionsListview.setOnItemClickListener((parent, view, position, id) -> {
+                if (position < 0 || position >= scannedDevices.size()) return;
+                WearTakBleClient.DiscoveredDevice picked = scannedDevices.get(position);
+
+                Log.d(TAG, "onSelected: " + picked.address);
+
+                if (bleClient != null) {
+                    bleClient.selectDevice(picked); // saves + connects
+                }
+
+                if (connectionStatusTV != null) {
+                    connectionStatusTV.setText("CONNECTING: " + picked.address);
+                    connectionStatusTV.setVisibility(View.VISIBLE);
+                }
+            });
+
+
+
+            scanButton = paneView.findViewById(R.id.scanButton);
+            scanButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    scanForDevices();
+                }
+            });
         }
+
 
         // if the plugin pane is not visible, show it!
         if(!uiService.isPaneVisible(templatePane)) {
             uiService.showPane(templatePane, null);
         }
-
-        // optional: force a check when pane opens
-        /*if (bleClient != null) {
-            bleClient.checkImmediate();
-        }*/
     }
+
+    private void scanForDevices() {
+        if (bleClient == null) {
+            Log.w(TAG, "scanForDevices: bleClient is null");
+            return;
+        }
+
+        mainHandler.post(() -> {
+            if (connectionsAdapter == null) {
+                Log.w(TAG, "scanForDevices: adapter not initialized (open pane first)");
+                return;
+            }
+            scannedDevices.clear();
+            connectionsAdapter.clear();
+            connectionsAdapter.notifyDataSetChanged();
+
+            if (connectionStatusTV != null) {
+                connectionStatusTV.setText("SCANNING...");
+                connectionStatusTV.setVisibility(View.VISIBLE);
+            }
+        });
+
+        bleClient.scanForDevices(new WearTakBleClient.ScanListener() {
+            @Override
+            public void onDeviceFound(WearTakBleClient.DiscoveredDevice device) {
+                mainHandler.post(() -> {
+                    // upsert by address
+                    int idx = -1;
+                    for (int i = 0; i < scannedDevices.size(); i++) {
+                        if (scannedDevices.get(i).address.equals(device.address)) {
+                            idx = i;
+                            break;
+                        }
+                    }
+                    if (idx >= 0) scannedDevices.set(idx, device);
+                    else scannedDevices.add(device);
+
+                    connectionsAdapter.clear();
+                    for (WearTakBleClient.DiscoveredDevice d : scannedDevices) {
+                        connectionsAdapter.add(d.toString());
+                    }
+                    connectionsAdapter.notifyDataSetChanged();
+                });
+            }
+
+            @Override
+            public void onScanFinished() {
+                mainHandler.post(() -> {
+                    if (connectionStatusTV != null) {
+                        connectionStatusTV.setText("SCAN COMPLETE (" + scannedDevices.size() + ")");
+                        connectionStatusTV.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+
+            @Override
+            public void onScanError(String msg) {
+                mainHandler.post(() -> {
+                    if (connectionStatusTV != null) {
+                        connectionStatusTV.setText("SCAN ERROR: " + msg);
+                        connectionStatusTV.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        });
+    }
+
 
     /*private void sendTestCots() {
         if (cotBridge == null) {

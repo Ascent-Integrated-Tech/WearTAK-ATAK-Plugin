@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
@@ -22,6 +24,7 @@ import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -43,6 +46,27 @@ public class WearTakBleClient {
     // TODO: lock these UUIDs with the WearTAK team
     public static final UUID EVENT_SERVICE_UUID =
             UUID.fromString("0000A100-0000-1000-8000-00805F9B34FB"); // WearTAK Event Service
+
+    public interface JsonListener {
+        void onReady();                // notifications enabled
+        void onJson(String jsonLine);  // a full JSON envelope line
+        void onError(String msg);
+    }
+
+    private volatile JsonListener jsonListener;
+
+    public void setJsonListener(JsonListener l) {
+        this.jsonListener = l;
+    }
+
+    private static final UUID CCCD_UUID =
+            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    private BluetoothGattCharacteristic notifyChar;
+
+    private final Object rxLock = new Object();
+    private final StringBuilder rxBuffer = new StringBuilder(2048);
+
 
     private static final String PREFS_NAME = "weartak_ble_prefs";
     private static final String KEY_DEVICE_ADDRESS = "device_address";
@@ -68,10 +92,42 @@ public class WearTakBleClient {
     private String knownDeviceAddress;
     private volatile boolean started = false;
 
+    private final java.util.LinkedHashMap<String, DiscoveredDevice> discovered = new java.util.LinkedHashMap<>();
+    private volatile ScanCallback listScanCallback;
+
     public WearTakBleClient(Context context, StatusListener listener) {
         this.baseContext = context;
         this.statusListener = listener;
     }
+
+    public static class DiscoveredDevice {
+        public final String name;
+        public final String address;
+        public final int rssi;
+
+        public DiscoveredDevice(String name, String address, int rssi) {
+            this.name = name;
+            this.address = address;
+            this.rssi = rssi;
+        }
+
+        @Override public String toString() {
+            String n = (name != null && !name.isEmpty()) ? name : "Unknown";
+            //return n + " (" + address + ") RSSI=" + rssi;
+            return n + " (" + address + ")";
+        }
+    }
+
+    public interface ScanListener {
+        void onDeviceFound(DiscoveredDevice device);
+        void onScanFinished();
+        void onScanError(String msg);
+    }
+
+    public interface SelectionListener {
+        void onSelected(DiscoveredDevice device);
+    }
+
 
     public synchronized void start() {
         if (started) {
@@ -165,6 +221,121 @@ public class WearTakBleClient {
 
         setConnected(false);
     }
+
+    public synchronized void scanForDevices(final ScanListener listener) {
+        if (!started) start();
+
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+            if (listener != null) listener.onScanError("Bluetooth disabled");
+            return;
+        }
+
+        if (scanner == null) {
+            scanner = bluetoothAdapter.getBluetoothLeScanner();
+        }
+        if (scanner == null) {
+            if (listener != null) listener.onScanError("No BLE scanner");
+            return;
+        }
+        if (scanning) {
+            if (listener != null) listener.onScanError("Already scanning");
+            return;
+        }
+
+        discovered.clear();
+        scanning = true;
+
+        ScanFilter filter = new ScanFilter.Builder()
+                .setServiceUuid(new ParcelUuid(EVENT_SERVICE_UUID))
+                .build();
+
+        ScanSettings settings = new ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+                .build();
+
+        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
+                != PackageManager.PERMISSION_GRANTED) {
+            if (listener != null) listener.onScanError("Missing BLUETOOTH_SCAN permission");
+            scanning = false;
+            return;
+        }
+
+        listScanCallback = new ScanCallback() {
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                if (!scanning || result == null || result.getDevice() == null) return;
+
+                BluetoothDevice d = result.getDevice();
+
+                String name = null;
+                String addr = null;
+                int rssi = result.getRssi();
+
+                try {
+                    if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                            == PackageManager.PERMISSION_GRANTED) {
+                        name = d.getName();
+                    }
+                } catch (Throwable ignored) {}
+                addr = d.getAddress();
+
+                if (addr == null) return;
+
+                DiscoveredDevice dd = new DiscoveredDevice(name, addr, rssi);
+                discovered.put(addr, dd);
+
+                if (listener != null) listener.onDeviceFound(dd);
+            }
+
+            @Override
+            public void onScanFailed(int errorCode) {
+                scanning = false;
+                if (listener != null) listener.onScanError("Scan failed: " + errorCode);
+            }
+        };
+
+        scanner.startScan(Collections.singletonList(filter), settings, listScanCallback);
+
+        // stop scan after 8 seconds
+        scheduler.schedule(() -> {
+            stopListingScan();
+            if (listener != null) listener.onScanFinished();
+        }, 8, TimeUnit.SECONDS);
+    }
+
+    private synchronized void stopListingScan() {
+        if (!scanning) return;
+        scanning = false;
+        try {
+            if (scanner != null && listScanCallback != null) {
+                if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    scanner.stopScan(listScanCallback);
+                }
+            }
+        } catch (Exception ignored) {}
+        listScanCallback = null;
+    }
+
+    public synchronized java.util.List<DiscoveredDevice> getLastDiscoveredDevices() {
+        return new java.util.ArrayList<>(discovered.values());
+    }
+
+    public synchronized void connectToAddress(String address) {
+        if (bluetoothAdapter == null || address == null) return;
+        BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
+        if (device != null) connectToDevice(device);
+    }
+
+    public synchronized void selectDevice(DiscoveredDevice device) {
+        if (device == null) return;
+        knownDeviceAddress = device.address;
+        SharedPreferences prefs =
+                appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putString(KEY_DEVICE_ADDRESS, knownDeviceAddress).apply();
+        connectToAddress(device.address);
+    }
+
 
     public void checkImmediate() {
         if (!started) {
@@ -352,11 +523,123 @@ public class WearTakBleClient {
             BluetoothGattService service = gatt.getService(EVENT_SERVICE_UUID);
             if (service == null) {
                 Log.w(TAG, "WearTAK Event Service not found on device");
-            } else {
-                Log.d(TAG, "WearTAK Event Service found");
+                if (jsonListener != null) jsonListener.onError("Event service missing");
+                return;
             }
-            // For V1 connection-status only, we don't need characteristics yet.
+
+            // Find a characteristic that supports NOTIFY or INDICATE
+            notifyChar = null;
+            for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
+                int props = c.getProperties();
+                boolean canNotify = (props & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0;
+                boolean canIndicate = (props & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0;
+
+                if (canNotify || canIndicate) {
+                    notifyChar = c;
+                    Log.d(TAG, "Using notify characteristic uuid=" + c.getUuid()
+                            + " props=" + props);
+                    break;
+                }
+            }
+
+            if (notifyChar == null) {
+                Log.w(TAG, "No NOTIFY/INDICATE characteristic found in Event Service");
+                if (jsonListener != null) jsonListener.onError("No notify characteristic");
+                return;
+            }
+
+            // Enable notifications
+            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return;
+            }
+            boolean notifSet = gatt.setCharacteristicNotification(notifyChar, true);
+            if (!notifSet) {
+                Log.w(TAG, "setCharacteristicNotification failed");
+                if (jsonListener != null) jsonListener.onError("Enable notification failed");
+                return;
+            }
+
+            BluetoothGattDescriptor cccd = notifyChar.getDescriptor(CCCD_UUID);
+            if (cccd == null) {
+                Log.w(TAG, "CCCD missing on characteristic " + notifyChar.getUuid());
+                if (jsonListener != null) jsonListener.onError("CCCD missing");
+                return;
+            }
+
+            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) {
+                if (jsonListener != null) jsonListener.onError("Missing BLUETOOTH_CONNECT permission");
+                return;
+            }
+
+            // Prefer NOTIFY if supported; otherwise INDICATE
+            int props = notifyChar.getProperties();
+            if ((props & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
+                cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            } else {
+                cccd.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
+            }
+
+            boolean wrote = gatt.writeDescriptor(cccd);
+            if (!wrote) {
+                Log.w(TAG, "writeDescriptor(CCCD) failed");
+                if (jsonListener != null) jsonListener.onError("CCCD write failed");
+            }
+
         }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            if (descriptor != null && CCCD_UUID.equals(descriptor.getUuid())) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "Notifications enabled; ready to receive JSON");
+                    if (jsonListener != null) jsonListener.onReady();
+                } else {
+                    Log.w(TAG, "CCCD write failed status=" + status);
+                    if (jsonListener != null) jsonListener.onError("CCCD write failed: " + status);
+                }
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            if (characteristic == null) return;
+            if (notifyChar == null) return;
+            if (!characteristic.getUuid().equals(notifyChar.getUuid())) return;
+
+            byte[] data = characteristic.getValue();
+            if (data == null || data.length == 0) return;
+
+            String chunk;
+            try {
+                chunk = new String(data, StandardCharsets.UTF_8);
+            } catch (Throwable t) {
+                if (jsonListener != null) jsonListener.onError("UTF-8 decode failed: " + t.getMessage());
+                return;
+            }
+
+            // Assume newline-delimited JSON. If your watch uses a different framing, we’ll adjust.
+            synchronized (rxLock) {
+                rxBuffer.append(chunk);
+                int idx;
+                while ((idx = rxBuffer.indexOf("\n")) >= 0) {
+                    String line = rxBuffer.substring(0, idx).trim();
+                    rxBuffer.delete(0, idx + 1);
+                    if (!line.isEmpty() && jsonListener != null) {
+                        jsonListener.onJson(line);
+                    }
+                }
+            }
+        }
+
+
     };
 
     private void setConnected(boolean value) {

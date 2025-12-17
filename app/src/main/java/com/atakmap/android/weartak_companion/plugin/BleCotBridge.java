@@ -744,6 +744,42 @@ public class BleCotBridge {
         }
     }
 
+    public void handleJsonFromWearTak(String envelopeJson) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+
+            String msgType = env.optString("msg_type", "").trim();
+            if (msgType.isEmpty()) {
+                Log.w(TAG, "handleJsonFromWearTak: missing msg_type");
+                return;
+            }
+
+            switch (msgType) {
+                case "marker":
+                    // Marker payload -> PLI / watch entity update
+                    sendStandardPli(envelopeJson);
+                    break;
+
+                case "emergency":
+                    // Emergency payload includes state ALERT/CANCEL; your existing method
+                    // should already choose b-a-o vs b-a-o-can based on payload.state.
+                    sendEmergencyAlert(envelopeJson);
+                    break;
+
+                case "chat":
+                    // GeoChat
+                    sendChat(envelopeJson);
+                    break;
+
+                default:
+                    Log.w(TAG, "handleJsonFromWearTak: unknown msg_type=" + msgType);
+                    break;
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
+        }
+    }
 
 
     // =========================================================================================
@@ -862,4 +898,6 @@ public class BleCotBridge {
             return String.valueOf(timeMs);
         }
     }
+
+
 }

@@ -50,11 +50,13 @@ drawable new_dark_button_selected
 id adjust_height
 id adjust_width
 id auto
+id availableConnections
 id connection_status
 id dark
 id icon_only
 id light
 id none
+id scanButton
 id standard
 id wide
 integer google_play_services_version

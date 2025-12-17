@@ -8,8 +8,8 @@ public final class BuildConfig {
   public static final String APPLICATION_ID = "com.atakmap.android.weartak_companion.plugin";
   public static final String BUILD_TYPE = "debug";
   public static final String FLAVOR = "civ";
-  public static final int VERSION_CODE = 1765540282;
-  public static final String VERSION_NAME = "0.1 (b6b06065) - [5.5.1]";
+  public static final int VERSION_CODE = 1765863157;
+  public static final String VERSION_NAME = "0.1 (e906b1c1) - [5.5.1]";
   // Field from the variant API
   public static final String ATAK_PACKAGE_NAME = "com.atakmap.app.civ";
 }

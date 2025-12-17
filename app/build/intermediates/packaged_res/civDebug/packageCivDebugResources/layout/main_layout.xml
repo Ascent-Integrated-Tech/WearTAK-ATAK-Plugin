@@ -3,7 +3,7 @@
 
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:fadeScrollbars="false"
     android:layout_marginLeft="3dp"
     android:layout_marginRight="3dp">
@@ -24,7 +24,26 @@
             android:layout_height="wrap_content"
             android:layout_marginVertical="5sp"
             android:text="CONNECTION STATUS"
-            android:id="@+id/connection_status"/>
+            android:id="@+id/connection_status"
+            android:visibility="invisible"/>
+
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <Button
+                android:layout_width="100sp"
+                android:layout_height="wrap_content"
+                android:text="SCAN"
+                android:id="@+id/scanButton"
+                android:layout_centerInParent="true"/>
+
+        </RelativeLayout>
+
+        <ListView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:id="@+id/availableConnections"/>
 
     </LinearLayout>
 </ScrollView>
