@@ -1,0 +1,16 @@
+# ===== Gradle =====
+.gradle/
+**/build/
+
+# ===== Local Android SDK config =====
+local.properties
+
+# ===== IDE =====
+.idea/
+*.iml
+
+# ===== OS =====
+.DS_Store
+
+# ===== Logs =====
+*.log
