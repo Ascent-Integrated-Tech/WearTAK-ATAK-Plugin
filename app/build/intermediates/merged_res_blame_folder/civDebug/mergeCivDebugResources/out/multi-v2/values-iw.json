@@ -4,24 +4,7 @@
             "outputFile": "com.atakmap.android.weartak_companion.plugin.app-mergeCivDebugResources-5:/values-iw/values-iw.xml",
             "map": [
                 {
-                    "source": "/home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/res/values-iw/values.xml",
-                    "from": {
-                        "startLines": "4",
-                        "startColumns": "0",
-                        "startOffsets": "195",
-                        "endColumns": "113",
-                        "endOffsets": "308"
-                    },
-                    "to": {
-                        "startLines": "10",
-                        "startColumns": "4",
-                        "startOffsets": "1020",
-                        "endColumns": "117",
-                        "endOffsets": "1133"
-                    }
-                },
-                {
-                    "source": "/home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/res/values-iw/values.xml",
+                    "source": "/Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/res/values-iw/values.xml",
                     "from": {
                         "startLines": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
                         "startColumns": "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",
@@ -35,6 +18,23 @@
                         "startOffsets": "55,158,312,437,541,680,805,917,1138,1274,1378,1523,1646,1780,1925,1985,2045",
                         "endColumns": "102,153,124,103,138,124,111,102,135,103,144,122,133,144,59,59,80",
                         "endOffsets": "153,307,432,536,675,800,912,1015,1269,1373,1518,1641,1775,1920,1980,2040,2121"
+                    }
+                },
+                {
+                    "source": "/Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/res/values-iw/values.xml",
+                    "from": {
+                        "startLines": "4",
+                        "startColumns": "0",
+                        "startOffsets": "195",
+                        "endColumns": "113",
+                        "endOffsets": "308"
+                    },
+                    "to": {
+                        "startLines": "10",
+                        "startColumns": "4",
+                        "startOffsets": "1020",
+                        "endColumns": "117",
+                        "endOffsets": "1133"
                     }
                 }
             ]

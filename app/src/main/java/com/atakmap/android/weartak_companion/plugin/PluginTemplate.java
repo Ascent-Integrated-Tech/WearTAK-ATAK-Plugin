@@ -2,6 +2,7 @@
 package com.atakmap.android.weartak_companion.plugin;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -11,6 +12,7 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import com.atak.plugins.impl.IToolbarItem;
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atak.plugins.impl.PluginLayoutInflater;
 import com.atakmap.android.maps.MapView;
@@ -29,8 +31,9 @@ import gov.tak.api.ui.PaneBuilder;
 import gov.tak.api.ui.ToolbarItem;
 import gov.tak.api.ui.ToolbarItemAdapter;
 import gov.tak.platform.marshal.MarshalManager;
+import gov.tak.platform.ui.MotionEvent;
 
-public class PluginTemplate implements IPlugin {
+public class PluginTemplate implements IPlugin, IToolbarItem {
 
     IServiceController serviceController;
     Context pluginContext;
@@ -84,28 +87,29 @@ public class PluginTemplate implements IPlugin {
         // initialize the toolbar button for the plugin
 
         // create the button
-        toolbarItem = new ToolbarItem.Builder(
-                pluginContext.getString(R.string.app_name),
-                MarshalManager.marshal(
-                        pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
-                        android.graphics.drawable.Drawable.class,
-                        gov.tak.api.commons.graphics.Bitmap.class))
-                .setListener(new ToolbarItemAdapter() {
-                    @Override
-                    public void onClick(ToolbarItem item) {
-                        showPane();
-                    }
-                })
-                .build();
+//        toolbarItem = new ToolbarItem.Builder(
+//                pluginContext.getString(R.string.app_name),
+//                MarshalManager.marshal(
+//                        pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
+//                        android.graphics.drawable.Drawable.class,
+//                        gov.tak.api.commons.graphics.Bitmap.class))
+//                .setListener(new ToolbarItemAdapter() {
+//                    @Override
+//                    public void onClick(ToolbarItem item) {
+//                        showPane();
+//                    }
+//                })
+//                .build();
     }
 
     @Override
     public void onStart() {
-        if (uiService == null)
-            return;
+//        if (uiService == null)
+//            return;
 
-        uiService.addToolbarItem(toolbarItem);
+//        uiService.addToolbarItem(toolbarItem);
 
+        this.serviceController.registerComponent(IToolbarItem.class, this);
         // Ensure we have a pluginContext
         if (pluginContext == null && serviceController != null) {
             PluginContextProvider ctxProvider =
@@ -191,10 +195,12 @@ public class PluginTemplate implements IPlugin {
     @Override
     public void onStop() {
         // the plugin is stopping, remove the button from the toolbar
-        if (uiService == null)
-            return;
+//        if (uiService == null)
+//            return;
+//
+//        uiService.removeToolbarItem(toolbarItem);
 
-        uiService.removeToolbarItem(toolbarItem);
+
 
         // clean up BLE on plugin stop
         if (bleClient != null) {
@@ -262,6 +268,8 @@ public class PluginTemplate implements IPlugin {
         // if the plugin pane is not visible, show it!
         if(!uiService.isPaneVisible(templatePane)) {
             uiService.showPane(templatePane, null);
+        } else {
+            uiService.closePane(templatePane);
         }
     }
 
@@ -559,4 +567,24 @@ public class PluginTemplate implements IPlugin {
     }
 
 
+    @Override
+    public String getShortDescription() {
+        return pluginContext.getString(R.string.app_name);
+    }
+
+    @Override
+    public Drawable getIcon() {
+        return
+        pluginContext.getResources().getDrawable(R.drawable.weartak_companion_plugin);
+    }
+
+    @Override
+    public String getDescription() {
+        return pluginContext.getString(R.string.app_desc);
+    }
+
+    @Override
+    public void onItemEvent(MotionEvent motionEvent) {
+        showPane();
+    }
 }

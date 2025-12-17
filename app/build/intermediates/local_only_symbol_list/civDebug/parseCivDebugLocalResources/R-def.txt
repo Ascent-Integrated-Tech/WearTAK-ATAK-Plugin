@@ -10,6 +10,7 @@ drawable ic_launcher
 drawable new_dark_button_bg
 drawable new_dark_button_disabled
 drawable new_dark_button_selected
+drawable weartak_companion_plugin
 id availableConnections
 id connection_status
 id scanButton

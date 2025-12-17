@@ -1,112 +1,112 @@
 -- Merging decision tree log ---
 meta-data#plugin-api
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:13:9-81
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:13:9-81
 	android:value
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:13:46-79
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:13:46-79
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:13:20-45
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:13:20-45
 manifest
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:1:1-31:12
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:1:1-31:12
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:1:1-31:12
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:1:1-31:12
-MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /home/ghost/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:17:1-24:12
-MERGED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:16:1-24:12
-MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:2:1-6:12
-MERGED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:16:1-26:12
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:1:1-31:12
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:1:1-31:12
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:1:1-31:12
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:1:1-31:12
+MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:16:1-24:12
+MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:2:1-6:12
+MERGED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:16:1-26:12
 	package
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 	android:versionName
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 	xmlns:tools
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:2:5-51
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:2:5-51
 	android:versionCode
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 	xmlns:android
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:1:11-69
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:1:11-69
 	tools:ignore
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:3:5-44
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:3:5-44
 uses-permission#android.permission.BLUETOOTH_CONNECT
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:5:5-76
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:5:5-76
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:5:22-73
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:5:22-73
 uses-permission#android.permission.BLUETOOTH_SCAN
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:6:5-73
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:6:5-73
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:6:22-70
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:6:22-70
 application
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:7:5-29:19
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:7:5-29:19
-MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /home/ghost/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:22:5-20
-MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /home/ghost/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:22:5-20
-MERGED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:19:5-23:19
-MERGED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:19:5-23:19
-MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:5:5-20
-MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:5:5-20
-MERGED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:20:5-24:19
-MERGED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:20:5-24:19
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:7:5-29:19
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:7:5-29:19
+MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:22:5-20
+MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:22:5-20
+MERGED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:19:5-23:19
+MERGED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:19:5-23:19
+MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:5:5-20
+MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:5:5-20
+MERGED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:20:5-24:19
+MERGED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:20:5-24:19
 	android:extractNativeLibs
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 	android:label
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:10:9-41
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:10:9-41
 	android:icon
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:9:9-45
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:9:9-58
 	android:allowBackup
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:8:9-36
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:8:9-36
 	android:description
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:11:9-47
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:11:9-47
 	android:theme
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:12:9-40
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:12:9-40
 meta-data#app_desc
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:14:9-78
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:14:9-78
 	android:value
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:14:44-76
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:14:44-76
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:14:20-43
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:14:20-43
 activity#com.atakmap.app.component
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:20:8-26:19
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:20:8-26:19
 	android:exported
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:21:12-35
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:21:12-35
 	tools:ignore
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:22:12-39
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:22:12-39
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:20:18-58
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:20:18-58
 intent-filter#action:name:com.atakmap.app.component
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:23:12-25:28
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:23:12-25:28
 	android:label
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:23:27-59
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:23:27-59
 action#com.atakmap.app.component
-ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:24:15-66
+ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:24:15-66
 	android:name
-		ADDED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml:24:23-63
+		ADDED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml:24:23-63
 uses-sdk
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
-INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
-MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /home/ghost/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:20:5-44
-MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /home/ghost/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:20:5-44
-MERGED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:18:5-43
-MERGED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:18:5-43
-MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:4:5-43
-MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:4:5-43
-MERGED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:18:5-43
-MERGED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:18:5-43
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
+INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
+MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:20:5-44
+MERGED from [com.google.android.gms:play-services-wearable:18.1.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/90f87dd4681d1392570b7f1b9e579d54/transformed/play-services-wearable-18.1.0/AndroidManifest.xml:20:5-44
+MERGED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:18:5-43
+MERGED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:18:5-43
+MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:4:5-43
+MERGED from [com.google.android.gms:play-services-tasks:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/f45e5906649c7a04952614829c35db76/transformed/play-services-tasks-18.0.1/AndroidManifest.xml:4:5-43
+MERGED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:18:5-43
+MERGED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:18:5-43
 	android:targetSdkVersion
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 	android:minSdkVersion
-		INJECTED from /home/ghost/Documents/Ascent/ATAK-CIV-5.5.1.8-SDK/samples/WearTAK-ATAK-Plugin/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/mollyizzi/Downloads/ATAK-CIV-5.5.1.10-SDK/samples/CompanionPlugin/app/src/main/AndroidManifest.xml
 activity#com.google.android.gms.common.api.GoogleApiActivity
-ADDED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:20:9-22:45
+ADDED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:20:9-22:45
 	android:exported
-		ADDED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:22:19-43
+		ADDED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:22:19-43
 	android:theme
-		ADDED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:21:19-78
+		ADDED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:21:19-78
 	android:name
-		ADDED from [com.google.android.gms:play-services-base:18.0.1] /home/ghost/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:20:19-85
+		ADDED from [com.google.android.gms:play-services-base:18.0.1] /Users/mollyizzi/.gradle/caches/8.13/transforms/57b62f0d07c5eeb7733702c62c325928/transformed/play-services-base-18.0.1/AndroidManifest.xml:20:19-85
 meta-data#com.google.android.gms.version
-ADDED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:21:9-23:69
+ADDED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:21:9-23:69
 	android:value
-		ADDED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:23:13-66
+		ADDED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:23:13-66
 	android:name
-		ADDED from [com.google.android.gms:play-services-basement:18.0.0] /home/ghost/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:22:13-58
+		ADDED from [com.google.android.gms:play-services-basement:18.0.0] /Users/mollyizzi/.gradle/caches/8.13/transforms/63e17664ea5fd61faadaf470dc55198a/transformed/play-services-basement-18.0.0/AndroidManifest.xml:22:13-58

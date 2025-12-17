@@ -46,6 +46,7 @@ int drawable ic_launcher 0x7f040016
 int drawable new_dark_button_bg 0x7f040017
 int drawable new_dark_button_disabled 0x7f040018
 int drawable new_dark_button_selected 0x7f040019
+int drawable weartak_companion_plugin 0x7f04001a
 int id adjust_height 0x7f050000
 int id adjust_width 0x7f050001
 int id auto 0x7f050002
