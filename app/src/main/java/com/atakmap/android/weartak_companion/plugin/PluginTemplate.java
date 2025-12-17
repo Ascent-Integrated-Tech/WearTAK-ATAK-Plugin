@@ -41,8 +41,9 @@ public class PluginTemplate implements IPlugin {
     private String connectionStatus = "DISCONNECTED";
     private ListView connectionsListview;
     private Button scanButton;
+    private int scanSessionCount = 0;
 
-    private static final String TAG = "PluginTemplate";
+    private static final String TAG = "WTK/Plugin";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WearTakBleClient bleClient;
@@ -101,6 +102,7 @@ public class PluginTemplate implements IPlugin {
 
     @Override
     public void onStart() {
+        android.util.Log.i(TAG, "PLUGIN onStart reached (LogX test)");
         if (uiService == null)
             return;
 
@@ -169,6 +171,28 @@ public class PluginTemplate implements IPlugin {
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON: " + jsonLine);
                 if (cotBridge != null) {
+                    try {
+                        org.json.JSONObject env = new org.json.JSONObject(jsonLine);
+                        String msgType = env.optString("msgType", "");
+                        if ("watch_info".equals(msgType)) {
+                            org.json.JSONObject p = env.optJSONObject("payload");
+                            if (p != null) {
+                                String pairedUid = p.optString("uid", "");
+                                String cs = p.optString("cs", "");
+                                Log.i("WTK/Plugin", "PAIR ESTABLISHED uid=" + pairedUid + " cs=" + cs);
+
+                                // Persist paired UID (NOT MAC)
+                                pluginContext.getSharedPreferences("wtk_pairing", Context.MODE_PRIVATE)
+                                        .edit()
+                                        .putString("paired_uid", pairedUid)
+                                        .putString("paired_callsign", cs)
+                                        .apply();
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Log.w("WTK/Plugin", "onJson: failed to parse envelope", t);
+                    }
+
                     cotBridge.handleJsonFromWearTak(jsonLine); // routing by msg_type
                 }
             }
@@ -250,11 +274,11 @@ public class PluginTemplate implements IPlugin {
 
 
             scanButton = paneView.findViewById(R.id.scanButton);
-            scanButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    scanForDevices();
-                }
+            scanButton.setOnClickListener(v -> {
+                int sessionId = ++scanSessionCount;
+                LogX.i(TAG, "UI: Scan button pressed. session=" + sessionId
+                        + " paneVisible=" + (templatePane != null && uiService != null && uiService.isPaneVisible(templatePane)));
+                scanForDevices(sessionId);
             });
         }
 
@@ -265,17 +289,24 @@ public class PluginTemplate implements IPlugin {
         }
     }
 
-    private void scanForDevices() {
+    private void scanForDevices(final int sessionId) {
         if (bleClient == null) {
-            Log.w(TAG, "scanForDevices: bleClient is null");
+            LogX.w(TAG, "scanForDevices: bleClient is null. session=" + sessionId);
             return;
         }
 
+        LogX.i(TAG, "scanForDevices: BEGIN session=" + sessionId);
+
         mainHandler.post(() -> {
+            LogX.d(TAG, "scanForDevices: UI reset list. session=" + sessionId
+                    + " adapterNull=" + (connectionsAdapter == null)
+                    + " listNull=" + (connectionsListview == null));
+
             if (connectionsAdapter == null) {
-                Log.w(TAG, "scanForDevices: adapter not initialized (open pane first)");
+                LogX.w(TAG, "scanForDevices: adapter not initialized (open pane first). session=" + sessionId);
                 return;
             }
+
             scannedDevices.clear();
             connectionsAdapter.clear();
             connectionsAdapter.notifyDataSetChanged();
@@ -289,6 +320,11 @@ public class PluginTemplate implements IPlugin {
         bleClient.scanForDevices(new WearTakBleClient.ScanListener() {
             @Override
             public void onDeviceFound(WearTakBleClient.DiscoveredDevice device) {
+                LogX.d(TAG, "scanForDevices: FOUND session=" + sessionId
+                        + " name=" + device.name
+                        + " addr=" + device.address
+                        + " rssi=" + device.rssi);
+
                 mainHandler.post(() -> {
                     // upsert by address
                     int idx = -1;
@@ -311,6 +347,9 @@ public class PluginTemplate implements IPlugin {
 
             @Override
             public void onScanFinished() {
+                LogX.i(TAG, "scanForDevices: FINISH session=" + sessionId
+                        + " foundCount=" + scannedDevices.size());
+
                 mainHandler.post(() -> {
                     if (connectionStatusTV != null) {
                         connectionStatusTV.setText("SCAN COMPLETE (" + scannedDevices.size() + ")");
@@ -321,6 +360,8 @@ public class PluginTemplate implements IPlugin {
 
             @Override
             public void onScanError(String msg) {
+                LogX.w(TAG, "scanForDevices: ERROR session=" + sessionId + " msg=" + msg);
+
                 mainHandler.post(() -> {
                     if (connectionStatusTV != null) {
                         connectionStatusTV.setText("SCAN ERROR: " + msg);

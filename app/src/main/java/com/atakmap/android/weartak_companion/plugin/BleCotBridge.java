@@ -20,7 +20,7 @@ import java.util.UUID;
 
 public class BleCotBridge {
 
-    private static final String TAG = "BleCotBridge";
+    private static final String TAG = "WTK/BleCotBridge";
 
     private final CotDispatcher externalCotDispatcher;
     private final CotDispatcher internalCotDispatcher;

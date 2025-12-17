@@ -41,11 +41,28 @@ import java.util.concurrent.TimeUnit;
  */
 public class WearTakBleClient {
 
-    private static final String TAG = "WearTakBleClient";
+    private static final String TAG = "WTK/BleClient";
 
     // TODO: lock these UUIDs with the WearTAK team
-    public static final UUID EVENT_SERVICE_UUID =
-            UUID.fromString("0000A100-0000-1000-8000-00805F9B34FB"); // WearTAK Event Service
+// WearTAK GATT
+    public static final UUID COMPANION_SERVICE_UUID =
+            UUID.fromString("0000A11A-0000-1000-8000-00805F9B34FB");
+    public static final UUID TX_TO_COMPANION_UUID =
+            UUID.fromString("0000A11B-0000-1000-8000-00805F9B34FB");
+    public static final UUID RX_FROM_COMPANION_UUID =
+            UUID.fromString("0000A11C-0000-1000-8000-00805F9B34FB");
+    private static final UUID CCCD_UUID =
+            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    private String diagState(String where) {
+        return where
+                + " started=" + started
+                + " adapter=" + (bluetoothAdapter != null)
+                + " enabled=" + (bluetoothAdapter != null && bluetoothAdapter.isEnabled())
+                + " scanner=" + (scanner != null)
+                + " scanning=" + scanning
+                + " knownAddr=" + knownDeviceAddress;
+    }
 
     public interface JsonListener {
         void onReady();                // notifications enabled
@@ -59,17 +76,15 @@ public class WearTakBleClient {
         this.jsonListener = l;
     }
 
-    private static final UUID CCCD_UUID =
-            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
-
     private BluetoothGattCharacteristic notifyChar;
+    private BluetoothGattCharacteristic writeChar;
+
 
     private final Object rxLock = new Object();
     private final StringBuilder rxBuffer = new StringBuilder(2048);
 
-
-    private static final String PREFS_NAME = "weartak_ble_prefs";
-    private static final String KEY_DEVICE_ADDRESS = "device_address";
+//    private static final String PREFS_NAME = "weartak_ble_prefs";
+//    private static final String KEY_DEVICE_ADDRESS = "device_address";
 
     public interface StatusListener {
         void onConnectionStatusChanged(boolean connected);
@@ -165,9 +180,9 @@ public class WearTakBleClient {
 
         scanner = bluetoothAdapter.getBluetoothLeScanner();
 
-        SharedPreferences prefs =
-                appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        knownDeviceAddress = prefs.getString(KEY_DEVICE_ADDRESS, null);
+//        SharedPreferences prefs =
+//                appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+//        knownDeviceAddress = prefs.getString(KEY_DEVICE_ADDRESS, null);
 
         scheduler = Executors.newSingleThreadScheduledExecutor();
 
@@ -176,7 +191,8 @@ public class WearTakBleClient {
 
         // Kick off initial connect/scan only if adapter is present
         if (bluetoothAdapter.isEnabled()) {
-            connectOrScan();
+//            connectOrScan();
+            Log.i(TAG, "start(): initialized; waiting for user Scan/Select (no auto-connect)");
         }
     }
 
@@ -223,9 +239,16 @@ public class WearTakBleClient {
     }
 
     public synchronized void scanForDevices(final ScanListener listener) {
+        LogX.i(TAG, "scanForDevices(): ENTER " + diagState("scanForDevices"));
         if (!started) start();
 
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+        if (bluetoothAdapter == null) {
+            LogX.w(TAG, "scanForDevices(): adapter is null " + diagState("scanForDevices"));
+            if (listener != null) listener.onScanError("Bluetooth adapter null");
+            return;
+        }
+        if (!bluetoothAdapter.isEnabled()) {
+            LogX.w(TAG, "scanForDevices(): Bluetooth disabled " + diagState("scanForDevices"));
             if (listener != null) listener.onScanError("Bluetooth disabled");
             return;
         }
@@ -234,10 +257,12 @@ public class WearTakBleClient {
             scanner = bluetoothAdapter.getBluetoothLeScanner();
         }
         if (scanner == null) {
+            LogX.w(TAG, "scanForDevices(): No BLE scanner " + diagState("scanForDevices"));
             if (listener != null) listener.onScanError("No BLE scanner");
             return;
         }
         if (scanning) {
+            LogX.w(TAG, "scanForDevices(): Already scanning " + diagState("scanForDevices"));
             if (listener != null) listener.onScanError("Already scanning");
             return;
         }
@@ -246,7 +271,7 @@ public class WearTakBleClient {
         scanning = true;
 
         ScanFilter filter = new ScanFilter.Builder()
-                .setServiceUuid(new ParcelUuid(EVENT_SERVICE_UUID))
+                .setServiceUuid(new ParcelUuid(COMPANION_SERVICE_UUID))
                 .build();
 
         ScanSettings settings = new ScanSettings.Builder()
@@ -261,23 +286,42 @@ public class WearTakBleClient {
         }
 
         listScanCallback = new ScanCallback() {
+
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
                 if (!scanning || result == null || result.getDevice() == null) return;
 
                 BluetoothDevice d = result.getDevice();
-
-                String name = null;
-                String addr = null;
                 int rssi = result.getRssi();
 
+                String addr = d.getAddress();
+                String name = null;
                 try {
                     if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                             == PackageManager.PERMISSION_GRANTED) {
                         name = d.getName();
                     }
                 } catch (Throwable ignored) {}
-                addr = d.getAddress();
+
+                // ScanRecord diagnostics (service UUIDs + local name as advertised)
+                String advName = null;
+                String serviceUuids = "null";
+                try {
+                    if (result.getScanRecord() != null) {
+                        advName = result.getScanRecord().getDeviceName();
+                        List<ParcelUuid> uuids = result.getScanRecord().getServiceUuids();
+                        serviceUuids = (uuids != null) ? uuids.toString() : "[]";
+                    }
+                } catch (Throwable t) {
+                    LogX.e(TAG, "scan: failed reading ScanRecord", t);
+                }
+
+                LogX.d(TAG, "scan: result cbType=" + callbackType
+                        + " addr=" + addr
+                        + " name=" + name
+                        + " advName=" + advName
+                        + " rssi=" + rssi
+                        + " svcUuids=" + serviceUuids);
 
                 if (addr == null) return;
 
@@ -294,16 +338,19 @@ public class WearTakBleClient {
             }
         };
 
+        LogX.i(TAG, "scanForDevices(): startScan filters=1 mode=LOW_POWER");
         scanner.startScan(Collections.singletonList(filter), settings, listScanCallback);
 
         // stop scan after 8 seconds
         scheduler.schedule(() -> {
+            LogX.i(TAG, "scanForDevices(): timeout reached, stopping. discoveredCount=" + discovered.size());
             stopListingScan();
             if (listener != null) listener.onScanFinished();
         }, 8, TimeUnit.SECONDS);
     }
 
     private synchronized void stopListingScan() {
+        LogX.i(TAG, "stopListingScan(): stopping scan. discoveredCount=" + discovered.size());
         if (!scanning) return;
         scanning = false;
         try {
@@ -382,7 +429,7 @@ public class WearTakBleClient {
         Log.d(TAG, "Starting scan for WearTAK Event Service");
 
         ScanFilter filter = new ScanFilter.Builder()
-                .setServiceUuid(new ParcelUuid(EVENT_SERVICE_UUID))
+                .setServiceUuid(new ParcelUuid(COMPANION_SERVICE_UUID))
                 .build();
 
         ScanSettings settings = new ScanSettings.Builder()
@@ -510,8 +557,8 @@ public class WearTakBleClient {
                     bluetoothGatt = null;
                 }
                 // retry later
-                scheduler.schedule(WearTakBleClient.this::connectOrScan,
-                        5, TimeUnit.SECONDS);
+//                scheduler.schedule(WearTakBleClient.this::connectOrScan,
+//                        5, TimeUnit.SECONDS);
             }
         }
 
@@ -520,12 +567,36 @@ public class WearTakBleClient {
             Log.d(TAG, "onServicesDiscovered status=" + status);
             if (status != BluetoothGatt.GATT_SUCCESS) return;
 
-            BluetoothGattService service = gatt.getService(EVENT_SERVICE_UUID);
+            BluetoothGattService service = gatt.getService(COMPANION_SERVICE_UUID);
             if (service == null) {
-                Log.w(TAG, "WearTAK Event Service not found on device");
-                if (jsonListener != null) jsonListener.onError("Event service missing");
+                Log.w(TAG, "WearTAK Companion Service (A11A) not found on device");
+                if (jsonListener != null) jsonListener.onError("Companion service missing (A11A)");
                 return;
             }
+
+            // Explicitly bind to the known WearTAK characteristics
+            notifyChar = service.getCharacteristic(RX_FROM_COMPANION_UUID);
+            writeChar  = service.getCharacteristic(TX_TO_COMPANION_UUID);
+
+            if (notifyChar == null) {
+                Log.w(TAG, "WearTAK RX characteristic (A11C) not found");
+                if (jsonListener != null) jsonListener.onError("RX characteristic missing (A11C)");
+                return;
+            }
+
+            if (writeChar == null) {
+                // Not fatal if you only need RX, but log it so we know.
+                Log.w(TAG, "WearTAK TX characteristic (A11B) not found");
+            }
+
+            BluetoothGattCharacteristic rx = service.getCharacteristic(RX_FROM_COMPANION_UUID);
+            BluetoothGattCharacteristic tx = service.getCharacteristic(TX_TO_COMPANION_UUID);
+
+            if (rx == null) { /* error */ return; }
+            if (tx == null) { /* error */ return; }
+
+            notifyChar = rx;          // notifications come from RX
+            writeChar  = tx;          // store tx in a field if you want to send to watch
 
             // Find a characteristic that supports NOTIFY or INDICATE
             notifyChar = null;
