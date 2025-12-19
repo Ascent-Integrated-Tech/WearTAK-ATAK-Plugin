@@ -19,7 +19,6 @@ import com.atakmap.coremap.maps.coords.GeoPoint;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ScheduledExecutorService;
 
 import gov.tak.api.plugin.IPlugin;
 import gov.tak.api.plugin.IServiceController;
@@ -142,9 +141,7 @@ public class PluginTemplate implements IPlugin {
             });
         }
 
-        if(bleClient != null){
-            bleClient.start();
-        }
+        bleClient.start();
 
         // NEW: CoT bridge init
         if (cotBridge == null) {
@@ -195,6 +192,11 @@ public class PluginTemplate implements IPlugin {
 
                     cotBridge.handleJsonFromWearTak(jsonLine); // routing by msg_type
                 }
+            }
+
+            @Override
+            public void onPaired(String deviceId, String callsign) {
+
             }
 
             @Override
@@ -262,7 +264,7 @@ public class PluginTemplate implements IPlugin {
                 Log.d(TAG, "onSelected: " + picked.address);
 
                 if (bleClient != null) {
-                    bleClient.selectDevice(picked); // saves + connects
+                    bleClient.connectToSelectedDevice(picked); // saves + connects
                 }
 
                 if (connectionStatusTV != null) {
@@ -276,8 +278,11 @@ public class PluginTemplate implements IPlugin {
             scanButton = paneView.findViewById(R.id.scanButton);
             scanButton.setOnClickListener(v -> {
                 int sessionId = ++scanSessionCount;
-                LogX.i(TAG, "UI: Scan button pressed. session=" + sessionId
-                        + " paneVisible=" + (templatePane != null && uiService != null && uiService.isPaneVisible(templatePane)));
+
+                if (bleClient != null) {
+                    bleClient.resetSession("UI Scan pressed session=" + sessionId);
+                }
+
                 scanForDevices(sessionId);
             });
         }
@@ -343,6 +348,11 @@ public class PluginTemplate implements IPlugin {
                     }
                     connectionsAdapter.notifyDataSetChanged();
                 });
+            }
+
+            @Override
+            public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
+
             }
 
             @Override
