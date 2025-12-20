@@ -264,7 +264,8 @@ public class PluginTemplate implements IPlugin {
                 Log.d(TAG, "onSelected: " + picked.address);
 
                 if (bleClient != null) {
-                    bleClient.connectToSelectedDevice(picked); // saves + connects
+                    bleClient.resetSession("UI device selected " + picked.address);
+                    bleClient.connectToSelectedDevice(picked);
                 }
 
                 if (connectionStatusTV != null) {
@@ -273,11 +274,11 @@ public class PluginTemplate implements IPlugin {
                 }
             });
 
-
-
             scanButton = paneView.findViewById(R.id.scanButton);
             scanButton.setOnClickListener(v -> {
                 int sessionId = ++scanSessionCount;
+
+                LogX.i(TAG, "UI: Scan pressed. session=" + sessionId);
 
                 if (bleClient != null) {
                     bleClient.resetSession("UI Scan pressed session=" + sessionId);
@@ -351,22 +352,7 @@ public class PluginTemplate implements IPlugin {
             }
 
             @Override
-            public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
-
-            }
-
-            @Override
-            public void onScanFinished() {
-                LogX.i(TAG, "scanForDevices: FINISH session=" + sessionId
-                        + " foundCount=" + scannedDevices.size());
-
-                mainHandler.post(() -> {
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText("SCAN COMPLETE (" + scannedDevices.size() + ")");
-                        connectionStatusTV.setVisibility(View.VISIBLE);
-                    }
-                });
-            }
+            public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {}
 
             @Override
             public void onScanError(String msg) {
