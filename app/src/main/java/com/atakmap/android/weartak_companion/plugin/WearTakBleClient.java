@@ -26,7 +26,9 @@ import androidx.core.app.ActivityCompat;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
@@ -34,23 +36,18 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * BLE client for WearTAK watch GATT server.
- *
- * Reset behavior:
- * - resetSession(): stop scan, close gatt, clear buffers/state.
- * - Scan button should call resetSession() before scanning.
- * - Clicking a device should call resetSession() before connect.
+ * Adds chunked writes so large JSON payloads can be reliably sent to the watch.
  */
 public class WearTakBleClient {
 
     private static final String TAG = "WTK/BleClient";
 
-    // WearTAK GATT (watch exposes server)
     public static final UUID COMPANION_SERVICE_UUID =
             UUID.fromString("0000A11A-0000-1000-8000-00805F9B34FB");
     public static final UUID TX_TO_COMPANION_UUID =
-            UUID.fromString("0000A11B-0000-1000-8000-00805F9B34FB"); // NOTIFY from watch -> phone
+            UUID.fromString("0000A11B-0000-1000-8000-00805F9B34FB"); // NOTIFY watch -> phone
     public static final UUID RX_FROM_COMPANION_UUID =
-            UUID.fromString("0000A11C-0000-1000-8000-00805F9B34FB"); // WRITE from phone -> watch
+            UUID.fromString("0000A11C-0000-1000-8000-00805F9B34FB"); // WRITE phone -> watch
     private static final UUID CCCD_UUID =
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
@@ -68,18 +65,14 @@ public class WearTakBleClient {
     private BluetoothGattCharacteristic txNotifyChar; // A11B
     private BluetoothGattCharacteristic rxWriteChar;  // A11C
 
-    // Handlers
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Handler bg = new Handler(Looper.getMainLooper()); // keep callbacks serialized
 
-    // State
     private volatile boolean started = false;
     private volatile boolean scanning = false;
     private volatile boolean connected = false;
 
     private final LinkedHashMap<String, DiscoveredDevice> discovered = new LinkedHashMap<>();
 
-    // Active scan callback + timeout runnable (so we can stop scan reliably)
     private ScanCallback activeScanCallback = null;
     private Runnable scanTimeoutRunnable = null;
 
@@ -88,25 +81,35 @@ public class WearTakBleClient {
     private final StringBuilder rxBuffer = new StringBuilder(4096);
 
     private static final int DESIRED_MTU = 512;
-    private volatile boolean mtuRequested = false;
     private volatile boolean mtuNegotiated = false;
+    private volatile int negotiatedMtu = 23; // default ATT MTU if unknown
 
-    // Optional: prevent immediate reconnect after close (reduces GATT 133 flakiness)
     private static final long RECONNECT_COOLDOWN_MS = 250;
     private long lastGattCloseMs = 0L;
 
+    // -------- TX queue (chunked writes) --------
+    private final Object txLock = new Object();
+    private final Deque<byte[]> txQueue = new ArrayDeque<>();
+    private volatile boolean txInFlight = false;
+
+    /**
+     * [Inference] Conservative chunk size to avoid edge MTU/stack issues.
+     * If MTU is negotiated, we compute (mtu - 3) and also clamp to 180.
+     */
+    private int computeMaxChunk() {
+        int mtuPayload = Math.max(20, negotiatedMtu - 3);
+        return Math.min(180, mtuPayload);
+    }
+
     public interface JsonListener {
-        void onReady();                // notifications enabled
-        void onJson(String jsonLine);  // a full JSON envelope line
+        void onReady();
+        void onJson(String jsonLine);
         void onPaired(String deviceId, String callsign);
         void onError(String msg);
     }
 
     private final AtomicReference<JsonListener> jsonListener = new AtomicReference<>(null);
-
-    public void setJsonListener(JsonListener l) {
-        jsonListener.set(l);
-    }
+    public void setJsonListener(JsonListener l) { jsonListener.set(l); }
 
     public interface StatusListener {
         void onConnectionStatusChanged(boolean connected);
@@ -147,35 +150,24 @@ public class WearTakBleClient {
     // -------------------- lifecycle --------------------
 
     public synchronized void start() {
-        if (started) {
-            logI("start(): already started");
-            return;
-        }
-        if (baseContext == null) {
-            logW("start(): null context");
-            return;
-        }
+        if (started) return;
+        if (baseContext == null) return;
+
         appContext = baseContext.getApplicationContext();
         if (appContext == null) appContext = baseContext;
 
         BluetoothManager bm = (BluetoothManager) appContext.getSystemService(Context.BLUETOOTH_SERVICE);
-        if (bm == null) {
-            logW("start(): BluetoothManager null");
-            return;
-        }
-        bluetoothAdapter = bm.getAdapter();
-        if (bluetoothAdapter == null) {
-            logW("start(): BluetoothAdapter null");
-            return;
-        }
-        scanner = bluetoothAdapter.getBluetoothLeScanner();
+        if (bm == null) return;
 
+        bluetoothAdapter = bm.getAdapter();
+        if (bluetoothAdapter == null) return;
+
+        scanner = bluetoothAdapter.getBluetoothLeScanner();
         started = true;
         logI("start(): initialized (no auto-connect)");
     }
 
     public synchronized void stop() {
-        logI("stop()");
         stopScanInternal("stop()");
         closeGattInternal("stop()");
         started = false;
@@ -184,25 +176,12 @@ public class WearTakBleClient {
         setConnected(false);
     }
 
-    /**
-     * Hard reset of the BLE session:
-     * - stops scan
-     * - closes gatt
-     * - clears rx buffer / MTU flags
-     * - clears "discovered" list (optional)
-     */
     public synchronized void resetSession(String reason) {
         logI("resetSession(): " + reason);
         stopScanInternal("resetSession: " + reason);
         closeGattInternal("resetSession: " + reason);
 
-        mtuRequested = false;
-        mtuNegotiated = false;
-
-        synchronized (rxLock) {
-            rxBuffer.setLength(0);
-        }
-
+        synchronized (rxLock) { rxBuffer.setLength(0); }
         discovered.clear();
         setConnected(false);
     }
@@ -220,15 +199,12 @@ public class WearTakBleClient {
             failScan(listener, "Bluetooth disabled");
             return;
         }
-        if (scanner == null) {
-            scanner = bluetoothAdapter.getBluetoothLeScanner();
-        }
+        if (scanner == null) scanner = bluetoothAdapter.getBluetoothLeScanner();
         if (scanner == null) {
             failScan(listener, "BLE scanner null");
             return;
         }
 
-        // Stop any previous scan cleanly
         stopScanInternal("scanForDevices(): pre-stop");
 
         if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
@@ -241,7 +217,7 @@ public class WearTakBleClient {
         scanning = true;
 
         ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY) // better UX for "Scan"
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
 
         activeScanCallback = new ScanCallback() {
@@ -266,10 +242,8 @@ public class WearTakBleClient {
                 String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
                 DiscoveredDevice dd = new DiscoveredDevice(displayName, addr, rssi);
 
-                boolean isNew = !discovered.containsKey(addr);
                 discovered.put(addr, dd);
 
-                // Always notify; RSSI updates matter
                 if (listener != null) listener.onDeviceFound(dd);
             }
 
@@ -282,7 +256,6 @@ public class WearTakBleClient {
             }
         };
 
-        logI("scanForDevices(): startScan timeout=" + timeoutSeconds + "s");
         try {
             scanner.startScan(null, settings, activeScanCallback);
         } catch (Throwable t) {
@@ -293,7 +266,6 @@ public class WearTakBleClient {
             return;
         }
 
-        // Schedule scan stop
         clearScanTimeout();
         scanTimeoutRunnable = () -> {
             List<DiscoveredDevice> out = stopScanInternal("scan timeout");
@@ -340,10 +312,7 @@ public class WearTakBleClient {
     // -------------------- selection / connect --------------------
 
     public synchronized void connectToSelectedDevice(DiscoveredDevice device) {
-        if (device == null || device.address == null) {
-            logW("connectToSelectedDevice(): null device/address");
-            return;
-        }
+        if (device == null || device.address == null) return;
         if (!started) start();
 
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
@@ -351,20 +320,13 @@ public class WearTakBleClient {
             return;
         }
 
-        // Stop scanning
         stopScanInternal("connectToSelectedDevice()");
 
-        // IMPORTANT:
-        // Do NOT closeGattInternal() here. The caller (UI) should have already called resetSession()
-        // or disconnect(). Closing here + cooldown creates a self-perpetuating loop.
-
-        // Cooldown: wait AFTER the most recent close, but do not recurse into connectToSelectedDevice()
         long now = android.os.SystemClock.uptimeMillis();
         long dt = now - lastGattCloseMs;
         long waitMs = (dt < RECONNECT_COOLDOWN_MS) ? (RECONNECT_COOLDOWN_MS - dt) : 0;
 
         if (waitMs > 0) {
-            logI("connect(): cooldown " + waitMs + "ms before connectGatt");
             final DiscoveredDevice copy = device;
             main.postDelayed(() -> connectGattNow(copy), waitMs);
         } else {
@@ -373,17 +335,13 @@ public class WearTakBleClient {
     }
 
     private synchronized void connectGattNow(DiscoveredDevice device) {
-        if (device == null || device.address == null) {
-            logW("connectGattNow(): null device/address");
-            return;
-        }
+        if (device == null || device.address == null) return;
+
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
             error("Bluetooth disabled");
             return;
         }
 
-        // If something already connected/connecting, hard close once here (safe)
-        // (This is not a loop because connectGattNow is never re-called from itself.)
         if (bluetoothGatt != null) {
             closeGattInternal("connectGattNow(): closing existing gatt");
             setConnected(false);
@@ -401,7 +359,6 @@ public class WearTakBleClient {
             return;
         }
 
-        logI("connectGattNow(): connectGatt -> " + device.toString());
         bluetoothGatt = d.connectGatt(appContext, false, gattCallback);
     }
 
@@ -410,14 +367,103 @@ public class WearTakBleClient {
         setConnected(false);
     }
 
+    // -------------------- NEW: outbound JSON write (chunked) --------------------
+
+    public synchronized boolean writeJsonLineToWatch(String jsonLine) {
+        if (jsonLine == null) return false;
+        if (!started) start();
+
+        if (bluetoothGatt == null || !connected) {
+            error("writeJsonLineToWatch: not connected");
+            return false;
+        }
+        if (rxWriteChar == null) {
+            error("writeJsonLineToWatch: RX write characteristic (A11C) missing");
+            return false;
+        }
+
+        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) {
+            error("Missing BLUETOOTH_CONNECT permission");
+            return false;
+        }
+
+        String payload = jsonLine.endsWith("\n") ? jsonLine : (jsonLine + "\n");
+        byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
+
+        int maxChunk = computeMaxChunk();
+        synchronized (txLock) {
+            // split into chunks
+            int off = 0;
+            while (off < bytes.length) {
+                int n = Math.min(maxChunk, bytes.length - off);
+                byte[] chunk = new byte[n];
+                System.arraycopy(bytes, off, chunk, 0, n);
+                txQueue.addLast(chunk);
+                off += n;
+            }
+
+            // kick the queue if idle
+            if (!txInFlight) {
+                txInFlight = true;
+                main.post(this::txSendNextLocked);
+            }
+        }
+
+        logI("TX->WATCH queued bytes=" + bytes.length + " chunks=" + ((bytes.length + maxChunk - 1) / maxChunk));
+        return true;
+    }
+
+    private void txSendNextLocked() {
+        byte[] next;
+        synchronized (txLock) {
+            next = txQueue.pollFirst();
+            if (next == null) {
+                txInFlight = false;
+                return;
+            }
+        }
+
+        if (bluetoothGatt == null || rxWriteChar == null) {
+            synchronized (txLock) {
+                txQueue.clear();
+                txInFlight = false;
+            }
+            error("TX aborted: gatt/char null");
+            return;
+        }
+
+        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) {
+            synchronized (txLock) {
+                txQueue.clear();
+                txInFlight = false;
+            }
+            error("TX aborted: missing BLUETOOTH_CONNECT permission");
+            return;
+        }
+
+        rxWriteChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+        rxWriteChar.setValue(next);
+
+        boolean ok = bluetoothGatt.writeCharacteristic(rxWriteChar);
+        if (!ok) {
+            synchronized (txLock) {
+                txQueue.clear();
+                txInFlight = false;
+            }
+            error("TX writeCharacteristic returned false");
+        }
+    }
+
+    public synchronized boolean isConnected() { return connected; }
+
     // -------------------- GATT --------------------
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
 
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            logI("onConnectionStateChange status=" + status + " newState=" + newState);
-
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 setConnected(true);
 
@@ -427,18 +473,11 @@ public class WearTakBleClient {
                     return;
                 }
 
-                mtuRequested = true;
-                mtuNegotiated = false;
-
-                boolean mtuOk = gatt.requestMtu(DESIRED_MTU);
-                logI("requestMtu(" + DESIRED_MTU + ") -> " + mtuOk);
-
-                // Wait for onMtuChanged then discoverServices
+                gatt.requestMtu(DESIRED_MTU);
                 return;
             }
 
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                logW("GATT disconnected status=" + status + " (no auto-reconnect)");
                 setConnected(false);
                 closeGattInternal("STATE_DISCONNECTED status=" + status);
             }
@@ -446,9 +485,8 @@ public class WearTakBleClient {
 
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
-            logI("onMtuChanged mtu=" + mtu + " status=" + status);
-
             mtuNegotiated = (status == BluetoothGatt.GATT_SUCCESS);
+            if (mtuNegotiated) negotiatedMtu = mtu;
 
             if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                     != PackageManager.PERMISSION_GRANTED) {
@@ -456,13 +494,11 @@ public class WearTakBleClient {
                 return;
             }
 
-            logI("discoverServices() after MTU");
             gatt.discoverServices();
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            logI("onServicesDiscovered status=" + status);
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 error("Service discovery failed: " + status);
                 return;
@@ -480,9 +516,6 @@ public class WearTakBleClient {
             if (txNotifyChar == null) {
                 error("TX notify char A11B missing");
                 return;
-            }
-            if (rxWriteChar == null) {
-                logW("RX write char A11C missing (write-to-watch disabled)");
             }
 
             enableTxNotifications(gatt, txNotifyChar);
@@ -508,13 +541,8 @@ public class WearTakBleClient {
             }
 
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-
             boolean wrote = gatt.writeDescriptor(cccd);
-            if (!wrote) {
-                error("writeDescriptor(CCCD) failed");
-            } else {
-                logI("CCCD write initiated (enable notifications)");
-            }
+            if (!wrote) error("writeDescriptor(CCCD) failed");
         }
 
         @Override
@@ -523,7 +551,6 @@ public class WearTakBleClient {
             if (!CCCD_UUID.equals(descriptor.getUuid())) return;
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                logI("Notifications enabled -> READY");
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
             } else {
@@ -550,16 +577,26 @@ public class WearTakBleClient {
                     rxBuffer.delete(0, idx + 1);
                     if (!line.isEmpty()) handleJsonLine(line);
                 }
-
-                // If watch sometimes sends full JSON without newline:
-                if (rxBuffer.length() > 1
-                        && rxBuffer.charAt(0) == '{'
-                        && rxBuffer.charAt(rxBuffer.length() - 1) == '}') {
-                    String maybe = rxBuffer.toString().trim();
-                    rxBuffer.setLength(0);
-                    if (!maybe.isEmpty()) handleJsonLine(maybe);
-                }
             }
+        }
+
+        @Override
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (characteristic == null) return;
+            if (rxWriteChar == null) return;
+            if (!characteristic.getUuid().equals(rxWriteChar.getUuid())) return;
+
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                synchronized (txLock) {
+                    txQueue.clear();
+                    txInFlight = false;
+                }
+                error("TX chunk write failed status=" + status);
+                return;
+            }
+
+            // send next chunk
+            main.post(WearTakBleClient.this::txSendNextLocked);
         }
     };
 
@@ -567,11 +604,9 @@ public class WearTakBleClient {
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
 
-        // Pairing: persist payload.uid when watch_info arrives
+        // existing pairing support
         try {
             JSONObject env = new JSONObject(line);
-
-            // Your plugin code uses "msgType" on receive; keep that convention here.
             String msgType = env.optString("msgType", "");
             if (!"watch_info".equals(msgType)) return;
 
@@ -583,12 +618,9 @@ public class WearTakBleClient {
 
             if (uid != null && !uid.isEmpty()) {
                 savePairedUid(uid, cs);
-                logI("PAIR: saved paired_uid=" + uid + " cs=" + cs);
                 if (l != null) l.onPaired(uid, cs);
             }
-        } catch (Throwable t) {
-            logW("handleJsonLine(): watch_info parse failed: " + t.getMessage());
-        }
+        } catch (Throwable ignored) { }
     }
 
     // -------------------- pairing storage --------------------
@@ -623,9 +655,8 @@ public class WearTakBleClient {
         txNotifyChar = null;
         rxWriteChar = null;
 
-        synchronized (rxLock) {
-            rxBuffer.setLength(0);
-        }
+        synchronized (rxLock) { rxBuffer.setLength(0); }
+        synchronized (txLock) { txQueue.clear(); txInFlight = false; }
 
         lastGattCloseMs = android.os.SystemClock.uptimeMillis();
         logI("closeGatt(): " + reason);
@@ -634,7 +665,6 @@ public class WearTakBleClient {
     private void setConnected(boolean value) {
         if (connected != value) {
             connected = value;
-            logI("connected=" + connected);
             if (statusListener != null) statusListener.onConnectionStatusChanged(connected);
         }
     }
@@ -674,15 +704,8 @@ public class WearTakBleClient {
         return null;
     }
 
-    private boolean startsWithWT(String s) {
-        return s != null && s.startsWith("WT-");
-    }
+    private boolean startsWithWT(String s) { return s != null && s.startsWith("WT-"); }
 
-    private void logI(String msg) {
-        android.util.Log.i(TAG, msg);
-    }
-
-    private void logW(String msg) {
-        android.util.Log.w(TAG, msg);
-    }
+    private void logI(String msg) { android.util.Log.i(TAG, msg); }
+    private void logW(String msg) { android.util.Log.w(TAG, msg); }
 }

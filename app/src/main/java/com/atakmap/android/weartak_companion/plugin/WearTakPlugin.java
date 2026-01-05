@@ -1,5 +1,6 @@
 package com.atakmap.android.weartak_companion.plugin;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,8 +16,12 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atak.plugins.impl.PluginLayoutInflater;
 import com.atakmap.android.maps.MapView;
-import com.atakmap.android.maps.Marker;
-import com.atakmap.coremap.maps.coords.GeoPoint;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import gov.tak.api.plugin.IPlugin;
 import gov.tak.api.plugin.IServiceController;
@@ -26,8 +31,6 @@ import gov.tak.api.ui.PaneBuilder;
 import gov.tak.api.ui.ToolbarItem;
 import gov.tak.api.ui.ToolbarItemAdapter;
 import gov.tak.platform.marshal.MarshalManager;
-
-import java.util.List;
 
 public class WearTakPlugin implements IPlugin {
 
@@ -41,28 +44,27 @@ public class WearTakPlugin implements IPlugin {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private WearTakBleClient bleClient;
-    private BleCotBridge cotBridge;
 
-    // ---------- Screen roots ----------
+    // Screen roots
     private View deviceScreenRoot;
     private View settingsScreenRoot;
 
-    // ---------- DEVICE SCREEN UI ----------
-    private TextView connectionStatusTV;     // chip
+    // Device screen
+    private TextView connectionStatusTV;
     private Button scanButton;
     private RecyclerView deviceList;
     private TextView emptyState;
 
-    private View connectedCard;
-    private TextView connectedDeviceTV;
-    private TextView connectedMacTV;
-    private TextView connectedMetricsTV;
-
     private BleDeviceAdapter deviceAdapter;
+    private final ArrayList<WearTakBleClient.DiscoveredDevice> scannedDevices = new ArrayList<>();
+    private WearTakBleClient.DiscoveredDevice selectedDevice = null;
 
-    // ---------- SETTINGS SCREEN UI ----------
+    // Settings screen
     private Button settingsBackButton;
     private TextView settingsDeviceSubtitle;
+
+    private RecyclerView takServerListRV;
+    private TakServerListAdapter takServerAdapter;
 
     private EditText takNameET;
     private EditText takAddressET;
@@ -70,52 +72,32 @@ public class WearTakPlugin implements IPlugin {
     private EditText takUsernameET;
     private EditText takPasswordET;
 
+    private EditText reportIntervalET;
+
     private Button sendSettingsButton;
+    private Button refreshSettingsButton;
     private TextView settingsStatusTV;
 
-    // ---------- State ----------
-    private String connectionStatus = "DISCONNECTED";
+    // State
     private int scanSessionCount = 0;
 
-    private final java.util.ArrayList<WearTakBleClient.DiscoveredDevice> scannedDevices =
-            new java.util.ArrayList<>();
-
-    private WearTakBleClient.DiscoveredDevice selectedDevice = null;
-
-    // ---------- Map stuff (unchanged / currently unused) ----------
-    private MapView mapView;
-    private Marker selfMarker;
-    private GeoPoint selfGeoPoint;
-    private String callsign;
-    private String team;
-    private Double selfLat;
-    private Double selfLon;
-
-    // ---------- UI status enum ----------
-    private enum UiStatus {
-        DISCONNECTED,
-        READY,
-        SCANNING,
-        CONNECTING,
-        CONNECTED,
-        ERROR
-    }
-
-    private UiStatus uiStatus = UiStatus.DISCONNECTED;
+    // last received snapshot
+    private JSONObject lastSettingsPayload = null;
+    private List<TakServerItem> currentServerList = new ArrayList<>();
+    private int currentSelectedServerIndex = -1;
+    private String currentConnectedAddress = null;
 
     public WearTakPlugin(IServiceController serviceController) {
         this.serviceController = serviceController;
 
-        final PluginContextProvider ctxProvider =
-                serviceController.getService(PluginContextProvider.class);
-
+        final PluginContextProvider ctxProvider = serviceController.getService(PluginContextProvider.class);
         if (ctxProvider != null) {
             pluginContext = ctxProvider.getPluginContext();
             pluginContext.setTheme(R.style.ATAKPluginTheme);
         }
 
         uiService = serviceController.getService(IHostUIService.class);
-        mapView = MapView.getMapView();
+        MapView.getMapView();
 
         toolbarItem = new ToolbarItem.Builder(
                 pluginContext.getString(R.string.app_name),
@@ -132,76 +114,112 @@ public class WearTakPlugin implements IPlugin {
                 .build();
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     @Override
     public void onStart() {
-        Log.i(TAG, "PLUGIN onStart reached");
-        if (uiService == null)
-            return;
-
+        if (uiService == null) return;
         uiService.addToolbarItem(toolbarItem);
 
         if (pluginContext == null && serviceController != null) {
-            PluginContextProvider ctxProvider =
-                    serviceController.getService(PluginContextProvider.class);
+            PluginContextProvider ctxProvider = serviceController.getService(PluginContextProvider.class);
             if (ctxProvider != null) {
                 pluginContext = ctxProvider.getPluginContext();
-                if (pluginContext != null) {
-                    pluginContext.setTheme(R.style.ATAKPluginTheme);
-                }
+                if (pluginContext != null) pluginContext.setTheme(R.style.ATAKPluginTheme);
             }
         }
 
         if (pluginContext == null) {
-            Log.w(TAG, "onStart: pluginContext is null; skipping BLE initialization");
+            Log.w(TAG, "onStart: pluginContext is null; skipping BLE init");
             return;
         }
 
         if (bleClient == null) {
             bleClient = new WearTakBleClient(pluginContext, connected -> {
-                connectionStatus = connected ? "CONNECTED" : "DISCONNECTED";
-                mainHandler.post(() -> applyConnectionUiState(connected));
+                mainHandler.post(() -> {
+                    if (connectionStatusTV != null) {
+                        connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
+                    }
+                    if (deviceAdapter != null) {
+                        if (connected) {
+                            if (currentConnectedAddress != null) {
+                                deviceAdapter.setConnected(currentConnectedAddress);
+                            } else {
+                                deviceAdapter.notifyDataSetChanged();
+                            }
+                        } else {
+                            deviceAdapter.clearConnectionMarkers();
+                            currentConnectedAddress = null;
+                        }
+                    }
+                });
             });
         }
 
         bleClient.start();
 
-        if (cotBridge == null) {
-            Log.d(TAG, "onStart: creating BleCotBridge instance");
-            cotBridge = new BleCotBridge();
-        }
-
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
             @Override
             public void onReady() {
-                Log.d(TAG, "BLE ready; JSON notifications enabled");
+                Log.i(TAG, "BLE READY");
                 mainHandler.post(() -> {
-                    setUiStatus(UiStatus.CONNECTED); // show as connected/ready
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText("CONNECTED (READY)");
-                    }
+                    if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
+                    // auto-request settings when ready
+                    requestSettingsFromWatch("onReady");
                 });
             }
 
             @Override
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON: " + jsonLine);
-                if (cotBridge != null) {
-                    cotBridge.handleJsonFromWearTak(jsonLine);
-                }
 
-                // Stub: if you later parse metrics here (HR/bat/steps), update connectedMetricsTV
-                // mainHandler.post(() -> connectedMetricsTV.setText("HR: 82   Bat: 100   Steps: 1200"));
+                try {
+                    JSONObject env = new JSONObject(jsonLine);
+                    String msgType = env.optString("msgType", "");
+
+                    // Watch -> plugin settings snapshot
+                    if ("settings_request".equals(msgType)) {
+                        JSONObject payload = env.optJSONObject("payload");
+                        if (payload != null) {
+                            lastSettingsPayload = payload;
+                            currentServerList = parseTakServerList(payload);
+                            Integer reportInt = optInt(payload, "reportIntSecs");
+
+                            mainHandler.post(() -> {
+                                if (settingsStatusTV != null) settingsStatusTV.setText("Settings loaded from watch.");
+                                applyServersToUi(currentServerList);
+
+                                if (reportInt != null && reportIntervalET != null) {
+                                    reportIntervalET.setText(String.valueOf(reportInt));
+                                }
+                            });
+                        }
+                    }
+
+                    // [Unverified] optional ack
+                    if ("settings_set_ack".equals(msgType)) {
+                        JSONObject p = env.optJSONObject("payload");
+                        boolean ok = (p != null) && p.optBoolean("ok", false);
+                        String err = (p != null) ? p.optString("error", "") : "";
+                        mainHandler.post(() -> {
+                            if (settingsStatusTV != null) {
+                                settingsStatusTV.setText(ok ? "Watch accepted settings." : ("Watch rejected settings: " + err));
+                            }
+                        });
+                    }
+
+                } catch (Throwable t) {
+                    Log.w(TAG, "onJson parse failed", t);
+                }
             }
 
-            @Override
-            public void onPaired(String deviceId, String callsign) { }
+            @Override public void onPaired(String deviceId, String callsign) { }
 
             @Override
             public void onError(String msg) {
-                Log.w(TAG, "BLE JSON error: " + msg);
                 mainHandler.post(() -> {
-                    setUiStatus(UiStatus.ERROR);
-                    if (connectionStatusTV != null) connectionStatusTV.setText("BLE ERROR");
+                    if (settingsStatusTV != null && settingsScreenRoot != null && settingsScreenRoot.getVisibility() == View.VISIBLE) {
+                        settingsStatusTV.setText("BLE error: " + msg);
+                    }
                 });
             }
         });
@@ -209,14 +227,9 @@ public class WearTakPlugin implements IPlugin {
 
     @Override
     public void onStop() {
-        if (uiService == null)
-            return;
-
+        if (uiService == null) return;
         uiService.removeToolbarItem(toolbarItem);
-
-        if (bleClient != null) {
-            bleClient.stop();
-        }
+        if (bleClient != null) bleClient.stop();
     }
 
     private void showPane() {
@@ -229,197 +242,135 @@ public class WearTakPlugin implements IPlugin {
                     .setMetaValue(Pane.PREFERRED_HEIGHT_RATIO, 0.5D)
                     .build();
 
-            // ---- Screen roots ----
+            // roots
             deviceScreenRoot = paneView.findViewById(R.id.deviceScreenRoot);
             settingsScreenRoot = paneView.findViewById(R.id.settingsScreenRoot);
 
-            // ---- Device screen bind ----
+            // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             scanButton = paneView.findViewById(R.id.scanButton);
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
 
-            connectedCard = paneView.findViewById(R.id.connectedCard);
-            connectedDeviceTV = paneView.findViewById(R.id.connectedDevice);
-            connectedMacTV = paneView.findViewById(R.id.connectedMac);
-            connectedMetricsTV = paneView.findViewById(R.id.connectedMetrics);
-
-            // ---- Settings screen bind ----
-            settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
-            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
-
-            takNameET = paneView.findViewById(R.id.takName);
-            takAddressET = paneView.findViewById(R.id.takAddress);
-            takPortET = paneView.findViewById(R.id.takPort);
-            takUsernameET = paneView.findViewById(R.id.takUsername);
-            takPasswordET = paneView.findViewById(R.id.takPassword);
-
-            sendSettingsButton = paneView.findViewById(R.id.sendSettingsButton);
-            settingsStatusTV = paneView.findViewById(R.id.settingsStatus);
-
-            if (connectionStatusTV != null) {
-                connectionStatusTV.setText(connectionStatus);
-                connectionStatusTV.setVisibility(View.VISIBLE);
-            }
-
-            // ---- RecyclerView setup ----
             deviceList.setLayoutManager(new LinearLayoutManager(pluginContext));
-
             deviceAdapter = new BleDeviceAdapter(new BleDeviceAdapter.Listener() {
                 @Override
                 public void onConnectClicked(WearTakBleClient.DiscoveredDevice device) {
                     selectedDevice = device;
-
-                    Log.d(TAG, "UI connect clicked: " + device.address);
-
-                    setUiStatus(UiStatus.CONNECTING);
-
                     if (bleClient != null) {
-                        bleClient.resetSession("UI device selected " + device.address);
+                        currentConnectedAddress = device.address;
+                        bleClient.resetSession("UI connect " + device.address);
                         bleClient.connectToSelectedDevice(device);
                     }
-
-                    if (deviceAdapter != null) {
-                        deviceAdapter.setConnecting(device.address);
-                    }
-
-                    if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
-                    if (connectedDeviceTV != null) connectedDeviceTV.setText(safeName(device));
-                    if (connectedMacTV != null) connectedMacTV.setText(device.address);
-                    if (connectedMetricsTV != null) connectedMetricsTV.setText("HR: —   Bat: —   Steps: —");
+                    if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
                 }
 
                 @Override
                 public void onSettingsClicked(WearTakBleClient.DiscoveredDevice device) {
-                    // Only meaningful when connected; adapter only offers it in that state
                     selectedDevice = device;
                     showSettingsScreen();
+                    requestSettingsFromWatch("settingsClicked");
+                    if (lastSettingsPayload != null) {
+                        applyServersToUi(currentServerList);
+                        Integer reportInt = optInt(lastSettingsPayload, "reportIntSecs");
+                        if (reportInt != null && reportIntervalET != null) reportIntervalET.setText(String.valueOf(reportInt));
+                    }
                 }
             });
-
             deviceList.setAdapter(deviceAdapter);
 
-            // ---- Scan button ----
             scanButton.setOnClickListener(v -> {
                 int sessionId = ++scanSessionCount;
-                LogX.i(TAG, "UI: Scan pressed. session=" + sessionId);
-
-                setUiStatus(UiStatus.SCANNING);
-
-                if (bleClient != null) {
-                    bleClient.resetSession("UI Scan pressed session=" + sessionId);
-                }
+                if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
 
                 scannedDevices.clear();
-                selectedDevice = null;
-
                 if (deviceAdapter != null) {
                     deviceAdapter.setDevices(scannedDevices);
                     deviceAdapter.clearConnectionMarkers();
                 }
 
                 if (emptyState != null) emptyState.setVisibility(View.GONE);
-                if (connectedCard != null) connectedCard.setVisibility(View.GONE);
-
                 scanForDevices(sessionId);
             });
 
-            // ---- Settings back ----
-            settingsBackButton.setOnClickListener(v -> showDeviceScreen());
+            // settings screen
+            settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
+            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
 
-            // ---- Send settings (stub) ----
-            sendSettingsButton.setOnClickListener(v -> {
-                // For now, just build a JSON and "pretend send".
-                // Later this will call a write method on WearTakBleClient (requires A11C write path + protocol).
-                String name = txt(takNameET);
-                String addr = txt(takAddressET);
-                String port = txt(takPortET);
-                String user = txt(takUsernameET);
-                String pass = txt(takPasswordET);
+            takServerListRV = paneView.findViewById(R.id.takServerList);
+            takServerListRV.setLayoutManager(new LinearLayoutManager(pluginContext));
 
-                String deviceId = (selectedDevice != null) ? selectedDevice.address : "—";
-
-                String json = "{"
-                        + "\"msgType\":\"set_tak_server\","
-                        + "\"payload\":{"
-                        + "\"device\":\"" + escape(deviceId) + "\","
-                        + "\"name\":\"" + escape(name) + "\","
-                        + "\"address\":\"" + escape(addr) + "\","
-                        + "\"port\":" + safeInt(port, 0) + ","
-                        + "\"username\":\"" + escape(user) + "\","
-                        + "\"password\":\"" + escape(pass) + "\""
-                        + "}"
-                        + "}";
-
-                Log.d(TAG, "SETTINGS STUB JSON -> " + json);
-
-                if (settingsStatusTV != null) {
-                    settingsStatusTV.setText("Stubbed send. (Not yet written to BLE)");
+            takServerAdapter = new TakServerListAdapter(new TakServerListAdapter.Listener() {
+                @Override
+                public void onSelected(int index) {
+                    currentSelectedServerIndex = index;
+                    TakServerItem item = safeGet(currentServerList, index);
+                    if (item != null) populateFieldsFromItem(item);
                 }
 
-                // TODO later:
-                // bleClient.writeJson(json);
+                @Override
+                public void onEnabledToggled(int index, boolean enabled) {
+                    // Keep local list updated; selection stays
+                    TakServerItem item = safeGet(currentServerList, index);
+                    if (item != null) item.isEnabled = enabled;
+                }
+            });
+            takServerListRV.setAdapter(takServerAdapter);
+
+            takNameET = paneView.findViewById(R.id.takName);
+            takAddressET = paneView.findViewById(R.id.takAddress);
+            takPortET = paneView.findViewById(R.id.takPort);
+            takUsernameET = paneView.findViewById(R.id.takUsername);
+            takPasswordET = paneView.findViewById(R.id.takPassword);
+            reportIntervalET = paneView.findViewById(R.id.reportInterval);
+
+            refreshSettingsButton = paneView.findViewById(R.id.refreshSettingsButton);
+            refreshSettingsButton.setOnClickListener(v -> requestSettingsFromWatch("refreshButton"));
+
+            sendSettingsButton = paneView.findViewById(R.id.sendSettingsButton);
+            settingsStatusTV = paneView.findViewById(R.id.settingsStatus);
+
+            sendSettingsButton.setOnClickListener(v -> {
+                // commit UI fields into selected item, then send whole list
+                commitFieldsToSelectedItem();
+                sendSettingsToWatch();
             });
 
-            // Start on device screen
+            settingsBackButton.setOnClickListener(v -> showDeviceScreen());
+
             showDeviceScreen();
-            setUiStatus(UiStatus.DISCONNECTED);
         }
 
         if (!uiService.isPaneVisible(templatePane)) {
             uiService.showPane(templatePane, null);
         }
+
+        // request settings on open (if already connected)
+        requestSettingsFromWatch("showPane");
     }
 
     private void scanForDevices(final int sessionId) {
-        if (bleClient == null) {
-            LogX.w(TAG, "scanForDevices: bleClient is null. session=" + sessionId);
-            setUiStatus(UiStatus.ERROR);
-            return;
-        }
-
-        LogX.i(TAG, "scanForDevices: BEGIN session=" + sessionId);
-
-        mainHandler.post(() -> {
-            scannedDevices.clear();
-            if (deviceAdapter != null) deviceAdapter.setDevices(scannedDevices);
-            if (emptyState != null) emptyState.setVisibility(View.GONE);
-        });
+        if (bleClient == null) return;
 
         bleClient.scanForDevices(new WearTakBleClient.ScanListener() {
             @Override
             public void onDeviceFound(WearTakBleClient.DiscoveredDevice device) {
                 mainHandler.post(() -> {
-                    int idx = -1;
-                    for (int i = 0; i < scannedDevices.size(); i++) {
-                        if (scannedDevices.get(i).address.equals(device.address)) {
-                            idx = i;
-                            break;
-                        }
-                    }
-                    if (idx >= 0) scannedDevices.set(idx, device);
-                    else scannedDevices.add(device);
-
+                    upsertDevice(device);
                     if (deviceAdapter != null) deviceAdapter.setDevices(scannedDevices);
-                    if (emptyState != null) emptyState.setVisibility(scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
                 });
             }
 
             @Override
             public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
                 mainHandler.post(() -> {
-                    if (scannedDevices.isEmpty()) {
-                        if (emptyState != null) emptyState.setVisibility(View.VISIBLE);
-                    }
-                    setUiStatus(UiStatus.READY);
+                    if (emptyState != null) emptyState.setVisibility(scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
                 });
             }
 
             @Override
             public void onScanError(String msg) {
-                LogX.w(TAG, "scanForDevices: ERROR session=" + sessionId + " msg=" + msg);
                 mainHandler.post(() -> {
-                    setUiStatus(UiStatus.ERROR);
                     if (emptyState != null) {
                         emptyState.setText("Scan error: " + msg);
                         emptyState.setVisibility(View.VISIBLE);
@@ -429,12 +380,133 @@ public class WearTakPlugin implements IPlugin {
         });
     }
 
-    // -------------------- Screen nav --------------------
+    private void upsertDevice(WearTakBleClient.DiscoveredDevice device) {
+        int idx = -1;
+        for (int i = 0; i < scannedDevices.size(); i++) {
+            if (scannedDevices.get(i).address.equals(device.address)) { idx = i; break; }
+        }
+        if (idx >= 0) scannedDevices.set(idx, device);
+        else scannedDevices.add(device);
+    }
+
+    // ---------- SETTINGS: request / parse / apply ----------
+
+    private void requestSettingsFromWatch(String reason) {
+        if (bleClient == null) return;
+        // watch expects base.msg_type == "request_settings"
+        String req = "{\"msg_type\":\"request_settings\"}";
+        boolean ok = bleClient.writeJsonLineToWatch(req);
+
+        Log.i(TAG, "request_settings (" + reason + ") ok=" + ok);
+
+        if (settingsStatusTV != null && settingsScreenRoot != null && settingsScreenRoot.getVisibility() == View.VISIBLE) {
+            settingsStatusTV.setText(ok ? "Requesting settings..." : "Cannot request settings (not connected).");
+        }
+    }
+
+    private List<TakServerItem> parseTakServerList(JSONObject payload) {
+        ArrayList<TakServerItem> out = new ArrayList<>();
+        if (payload == null) return out;
+        JSONArray arr = payload.optJSONArray("takServerList");
+        if (arr == null) return out;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            out.add(TakServerItem.fromJson(o));
+        }
+        return out;
+    }
+
+    private void applyServersToUi(List<TakServerItem> servers) {
+        if (takServerAdapter == null) return;
+
+        takServerAdapter.setItems(servers);
+
+        // pick selection: first enabled else first
+        int sel = -1;
+        for (int i = 0; i < servers.size(); i++) {
+            if (servers.get(i).isEnabled) { sel = i; break; }
+        }
+        if (sel == -1 && !servers.isEmpty()) sel = 0;
+
+        currentSelectedServerIndex = sel;
+        takServerAdapter.setSelectedIndex(sel);
+
+        TakServerItem chosen = safeGet(servers, sel);
+        if (chosen != null) populateFieldsFromItem(chosen);
+    }
+
+    private void populateFieldsFromItem(TakServerItem item) {
+        if (item == null) return;
+
+        setText(takNameET, item.name);
+        setText(takAddressET, item.address);
+        setText(takPortET, String.valueOf(item.port));
+
+        // For now: show username/pass only if not P12
+        if (!item.isP12Cert) {
+            setText(takUsernameET, item.username);
+            setText(takPasswordET, item.password);
+        } else {
+            setText(takUsernameET, "");
+            setText(takPasswordET, "");
+        }
+    }
+
+    private void commitFieldsToSelectedItem() {
+        TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+        if (item == null) return;
+
+        item.name = getText(takNameET);
+        item.address = getText(takAddressET);
+
+        Integer port = tryParseInt(getText(takPortET));
+        if (port != null) item.port = port;
+
+        if (!item.isP12Cert) {
+            item.username = getText(takUsernameET);
+            item.password = getText(takPasswordET);
+        }
+    }
+
+    // ---------- SETTINGS: send back to watch ----------
+
+    private void sendSettingsToWatch() {
+        if (bleClient == null) return;
+
+        // [Unverified] Proposed "set_settings" message contract
+        JSONObject root = new JSONObject();
+        JSONObject payload = new JSONObject();
+        JSONArray list = new JSONArray();
+
+        try {
+            for (TakServerItem t : currentServerList) {
+                list.put(t.toJson());
+            }
+
+            payload.put("takServerList", list);
+
+            Integer reportInt = tryParseInt(getText(reportIntervalET));
+            if (reportInt != null) payload.put("reportIntSecs", reportInt);
+
+            root.put("msg_type", "set_settings");
+            root.put("payload", payload);
+        } catch (Throwable t) {
+            if (settingsStatusTV != null) settingsStatusTV.setText("Failed to build settings JSON.");
+            return;
+        }
+
+        boolean ok = bleClient.writeJsonLineToWatch(root.toString());
+        if (settingsStatusTV != null) {
+            settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
+        }
+    }
+
+    // ---------- screen nav ----------
 
     private void showSettingsScreen() {
         if (settingsDeviceSubtitle != null) {
             String label = (selectedDevice != null)
-                    ? (safeName(selectedDevice) + "  •  " + selectedDevice.address)
+                    ? ((selectedDevice.name == null ? "WearTAK" : selectedDevice.name) + " • " + selectedDevice.address)
                     : "—";
             settingsDeviceSubtitle.setText(label);
         }
@@ -447,84 +519,36 @@ public class WearTakPlugin implements IPlugin {
         if (deviceScreenRoot != null) deviceScreenRoot.setVisibility(View.VISIBLE);
     }
 
-    // -------------------- Chip status styling --------------------
+    // ---------- utils ----------
 
-    private void setUiStatus(UiStatus s) {
-        uiStatus = s;
-        applyStatusChip();
+    private static void setText(EditText e, String v) {
+        if (e == null) return;
+        e.setText(v == null ? "" : v);
     }
 
-    private void applyConnectionUiState(boolean connected) {
-        if (connected) {
-            setUiStatus(UiStatus.CONNECTED);
+    private static String getText(EditText e) {
+        if (e == null || e.getText() == null) return "";
+        return e.getText().toString().trim();
+    }
 
-            if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
-            if (selectedDevice != null) {
-                if (connectedDeviceTV != null) connectedDeviceTV.setText(safeName(selectedDevice));
-                if (connectedMacTV != null) connectedMacTV.setText(selectedDevice.address);
-
-                if (deviceAdapter != null) deviceAdapter.setConnected(selectedDevice.address);
-            }
-        } else {
-            setUiStatus(UiStatus.DISCONNECTED);
-            if (deviceAdapter != null) deviceAdapter.clearConnectionMarkers();
+    private static Integer tryParseInt(String s) {
+        try {
+            if (s == null || s.isEmpty()) return null;
+            return Integer.parseInt(s);
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
-    private void applyStatusChip() {
-        if (connectionStatusTV == null) return;
-
-        switch (uiStatus) {
-            case CONNECTED:
-                connectionStatusTV.setText("CONNECTED");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_success);
-                break;
-            case CONNECTING:
-                connectionStatusTV.setText("CONNECTING");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_warning);
-                break;
-            case SCANNING:
-                connectionStatusTV.setText("SCANNING");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_warning);
-                break;
-            case READY:
-                connectionStatusTV.setText("READY");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_neutral);
-                break;
-            case ERROR:
-                connectionStatusTV.setText("ERROR");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_error);
-                break;
-            case DISCONNECTED:
-            default:
-                connectionStatusTV.setText("DISCONNECTED");
-                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_neutral);
-                break;
-        }
-
-        connectionStatusTV.setVisibility(View.VISIBLE);
+    private static Integer optInt(JSONObject o, String key) {
+        if (o == null) return null;
+        if (!o.has(key)) return null;
+        try { return o.getInt(key); } catch (Throwable t) { return null; }
     }
 
-    // -------------------- Helpers --------------------
-
-    private static String safeName(WearTakBleClient.DiscoveredDevice d) {
-        if (d == null) return "—";
-        if (d.name != null && !d.name.isEmpty()) return d.name;
-        return "Unknown";
-    }
-
-    private static String txt(EditText e) {
-        if (e == null) return "";
-        CharSequence cs = e.getText();
-        return cs == null ? "" : cs.toString().trim();
-    }
-
-    private static int safeInt(String s, int def) {
-        try { return Integer.parseInt(s); } catch (Throwable t) { return def; }
-    }
-
-    private static String escape(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    private static TakServerItem safeGet(List<TakServerItem> list, int idx) {
+        if (list == null) return null;
+        if (idx < 0 || idx >= list.size()) return null;
+        return list.get(idx);
     }
 }

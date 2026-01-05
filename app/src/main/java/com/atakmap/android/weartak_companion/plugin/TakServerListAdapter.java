@@ -1,0 +1,101 @@
+package com.atakmap.android.weartak_companion.plugin;
+
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.CheckBox;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdapter.Holder> {
+
+    public interface Listener {
+        void onSelected(int index);
+        void onEnabledToggled(int index, boolean enabled);
+    }
+
+    private final Listener listener;
+    private final List<TakServerItem> items = new ArrayList<>();
+    private int selectedIndex = -1;
+
+    public TakServerListAdapter(Listener listener) {
+        this.listener = listener;
+    }
+
+    public void setItems(List<TakServerItem> newItems) {
+        items.clear();
+        if (newItems != null) items.addAll(newItems);
+        if (selectedIndex >= items.size()) selectedIndex = -1;
+        notifyDataSetChanged();
+    }
+
+    public List<TakServerItem> getItems() {
+        return new ArrayList<>(items);
+    }
+
+    public void setSelectedIndex(int idx) {
+        selectedIndex = idx;
+        notifyDataSetChanged();
+    }
+
+    public int getSelectedIndex() {
+        return selectedIndex;
+    }
+
+    @NonNull
+    @Override
+    public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.row_tak_server, parent, false);
+        return new Holder(v);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull Holder h, int position) {
+        TakServerItem item = items.get(position);
+
+        h.name.setText((item.name == null || item.name.isEmpty()) ? "Unnamed Server" : item.name);
+        String addr = (item.address == null) ? "" : item.address;
+        h.sub.setText(addr + ":" + item.port);
+
+        h.enabled.setOnCheckedChangeListener(null);
+        h.enabled.setChecked(item.isEnabled);
+        h.enabled.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            item.isEnabled = isChecked;
+            if (listener != null) listener.onEnabledToggled(position, isChecked);
+        });
+
+        boolean selected = (position == selectedIndex);
+        h.root.setBackgroundResource(selected ? R.drawable.bg_row_selected : R.drawable.bg_row_normal);
+
+        h.root.setOnClickListener(v -> {
+            selectedIndex = position;
+            notifyDataSetChanged();
+            if (listener != null) listener.onSelected(position);
+        });
+    }
+
+    @Override
+    public int getItemCount() {
+        return items.size();
+    }
+
+    static class Holder extends RecyclerView.ViewHolder {
+        View root;
+        TextView name;
+        TextView sub;
+        CheckBox enabled;
+
+        Holder(@NonNull View itemView) {
+            super(itemView);
+            root = itemView;
+            name = itemView.findViewById(R.id.serverName);
+            sub = itemView.findViewById(R.id.serverSub);
+            enabled = itemView.findViewById(R.id.serverEnabled);
+        }
+    }
+}
