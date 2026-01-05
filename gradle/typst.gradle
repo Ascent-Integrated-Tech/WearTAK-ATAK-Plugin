@@ -1,118 +1,156 @@
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.IOException
 
-task setupTypst {
+def typstVersion = "v0.13.1"
+
+def computeTypstAsset = {
+    def os = System.getProperty("os.name").toLowerCase()
+    def arch = System.getProperty("os.arch").toLowerCase()
+
+    if (os.contains("mac")) {
+        // Apple Silicon vs Intel
+        if (arch.contains("aarch64") || arch.contains("arm")) {
+            return "typst-aarch64-apple-darwin.tar.xz"
+        } else {
+            return "typst-x86_64-apple-darwin.tar.xz"
+        }
+    } else if (os.contains("linux")) {
+        // Most CI runners are x86_64; adjust if you ever see linux arm runners.
+        return "typst-x86_64-unknown-linux-musl.tar.xz"
+    } else {
+        throw new GradleException("Unsupported OS for typst: ${os} ${arch}")
+    }
+}
+
+def typstUrl = {
+    def asset = computeTypstAsset()
+    return "https://github.com/typst/typst/releases/download/${typstVersion}/${asset}"
+}
+
+def typstDownloadDir = { file("${project.buildDir}/typst") } // project == :app when applied from app/build.gradle
+def typstTarFile     = { file("${typstDownloadDir()}/typst.tar.xz") }
+def typstExtractRoot = { file("${typstDownloadDir()}/extracted") }
+
+// Returns the directory that contains the typst executable after extraction.
+// This is computed at execution time (inside doLast), not at configuration time.
+def findExtractedTypstDir = {
+    def root = typstExtractRoot()
+    if (!root.exists()) return null
+    return root.listFiles()?.find { it.isDirectory() && it.name.startsWith("typst-") }
+}
+
+tasks.register("setupTypst") {
     group = "typst"
     description = "Sets up Typst by downloading and extracting the binary."
 
-    def typstUrl = "https://github.com/typst/typst/releases/download/v0.13.1/typst-x86_64-unknown-linux-musl.tar.xz"
-    def downloadDir = file("${buildDir}/typst")
-    def tarFile = file("${downloadDir}/typst.tar.xz")
-    def extractDir = file("${downloadDir}/extracted")
-
-    inputs.property("typstUrl", typstUrl)
-    outputs.dir(extractDir)
+    inputs.property("typstUrl", typstUrl())
+    outputs.dir(typstExtractRoot())
 
     doLast {
-        if (file("$extractDir/typst-x86_64-unknown-linux-musl/typst").exists()) {
-            // Already downloaded and extracted.
+        def extractRoot = typstExtractRoot()
+        def existingDir = findExtractedTypstDir()
+        def existingExe = existingDir ? new File(existingDir, "typst") : null
+        if (existingExe != null && existingExe.exists()) {
+            // Already present.
             return
         }
 
-        // Ensure the download directory exists
-        if (!downloadDir.exists()) {
-            downloadDir.mkdirs()
-        }
+        def downloadDir = typstDownloadDir()
+        if (!downloadDir.exists()) downloadDir.mkdirs()
 
-        // Download the Typst archive using curl or wget
-        def downloadCommand = "curl -L $typstUrl -o $tarFile"
+        def tarFile = typstTarFile()
+
+        // Download
+        def url = typstUrl()
+        def downloadCommand = "curl -L ${url} -o ${tarFile.absolutePath}"
         println "Executing: $downloadCommand"
         def downloadProcess = downloadCommand.execute()
-        downloadProcess.waitFor()
+        downloadProcess.waitForProcessOutput(System.out, System.err)
 
         if (downloadProcess.exitValue() != 0) {
             throw new GradleException("Download failed with exit code ${downloadProcess.exitValue()}")
         }
 
-        // Ensure the extract directory exists
-        if (!extractDir.exists()) {
-            extractDir.mkdirs()
-        }
+        // Ensure extract root exists
+        if (!extractRoot.exists()) extractRoot.mkdirs()
 
-        // Decompress and extract the tar.xz file using bash commands
-        def extractCommand = "tar -xf $tarFile -C $extractDir"
+        // Extract (tar will create typst-<platform>/ inside extractRoot)
+        def extractCommand = "tar -xf ${tarFile.absolutePath} -C ${extractRoot.absolutePath}"
         println "Executing: $extractCommand"
         def extractProcess = extractCommand.execute()
-        extractProcess.waitFor()
+        extractProcess.waitForProcessOutput(System.out, System.err)
 
         if (extractProcess.exitValue() != 0) {
             throw new GradleException("Extraction failed with exit code ${extractProcess.exitValue()}")
         }
 
-        // Remove the tar.xz file after extraction
+        // Clean up
         tarFile.delete()
     }
 }
 
-task runTypst(dependsOn: setupTypst) {
+tasks.register("runTypst") {
     group = "typst"
     description = "Runs the Typst executable with the first .typ file (excluding formatting.typ)."
-
-    // Constants, adjust as needed on a per-project basis
-    def srcDir = file("$rootDir/docs/user_manual")
-    def extractDir = file("$rootDir/app/build/typst/extracted/typst-x86_64-unknown-linux-musl")
-    def assetsDir = file("$rootDir/app/src/main/assets")
+    dependsOn("setupTypst")
 
     doLast {
-        ///// Load the project version
+        // Paths
+        def srcDir = file("${rootDir}/docs/user_manual")
+        def assetsDir = file("${rootDir}/app/src/main/assets")
+        if (!assetsDir.exists()) assetsDir.mkdirs()
+
+        // Version strings
         def pluginVersion = PLUGIN_VERSION
-
-        ///// Load the platform version.
-        Properties properties = new Properties()
-        try {
-            properties.load(new FileInputStream(rootProject.file('gradle.properties')))
-        } catch (IOException e) {
-            // Failed to read from local.properties, handle the exception if needed
-        }
-
         def platformVersion = ATAK_VERSION
 
         // Find the first *.typ file excluding formatting.typ
         def typFile = fileTree(srcDir)
-                .include('**/*.typ')
-                .exclude('**/formatting.typ')
-                .first()
+                .include("**/*.typ")
+                .exclude("**/formatting.typ")
+                .files
+                .find { it.isFile() }
 
         if (!typFile) {
-            throw new GradleException("Error: No *.typ file found in $srcDir")
+            throw new GradleException("Error: No *.typ file found in ${srcDir}")
         }
 
-        // Replace platform-version and plugin-version
+        // Update platform-version and plugin-version in the typ source
         def fileContent = typFile.text
-        fileContent = fileContent.replaceAll(/platform-version: ".*?"/, "platform-version: \"$platformVersion\"")
-        fileContent = fileContent.replaceAll(/plugin-version: ".*?"/, "plugin-version: \"$pluginVersion\"")
-
-        // Write the modified content back to the file
+        fileContent = fileContent.replaceAll(/platform-version: ".*?"/, "platform-version: \"${platformVersion}\"")
+        fileContent = fileContent.replaceAll(/plugin-version: ".*?"/, "plugin-version: \"${pluginVersion}\"")
         typFile.text = fileContent
 
-        // Check if 'typst' is available
-        def typstExecutable = 'typst'
-        if (!new File(typstExecutable).exists()) {
-            typstExecutable = "${extractDir}/typst"  // Use the local executable if 'typst' is not found
+        // Locate extracted typst directory
+        def extractedDir = findExtractedTypstDir()
+        if (!extractedDir) {
+            throw new GradleException("Typst extracted directory not found under ${typstExtractRoot()}. Did setupTypst run?")
         }
 
-        // Run the typst compile command
+        def extractedExe = new File(extractedDir, "typst")
+        if (!extractedExe.exists()) {
+            throw new GradleException("Typst executable not found at ${extractedExe.absolutePath}")
+        }
+
+        // If system typst exists and is runnable, you could prefer it, but keeping behavior simple:
+        def typstExecutable = extractedExe.absolutePath
+
+        // Run typst compile
+        def outPdf = new File(assetsDir, "usermanual.pdf")
         def typstCommand = [
-                "${typstExecutable}", "compile",
-                "--root", "$rootDir",
-                "--font-path", "$srcDir",
+                typstExecutable, "compile",
+                "--root", "${rootDir}",
+                "--font-path", "${srcDir}",
                 "${typFile.absolutePath}",
-                "${assetsDir.absolutePath}/usermanual.pdf"
+                "${outPdf.absolutePath}"
         ]
-        println "Running command: $typstCommand"
+
+        println "Running command: ${typstCommand}"
         def process = typstCommand.execute()
-
         process.waitForProcessOutput(System.out, System.err)
-        if (process.exitValue() != 0) {
 
+        if (process.exitValue() != 0) {
             throw new GradleException("Error: typst command failed with exit code ${process.exitValue()}")
         }
     }
@@ -120,13 +158,12 @@ task runTypst(dependsOn: setupTypst) {
 
 // Only runs by default on the official ATAK release pipeline.
 if (System.getenv("ATAK_CI") == "1") {
-    println("running typst to generate the user manual");
+    println("running typst to generate the user manual")
     android.applicationVariants.all { variant ->
         variant.mergeResourcesProvider.configure {
-            dependsOn runTypst
+            dependsOn(tasks.named("runTypst"))
         }
     }
-} else { 
-    println("skipping user manual generation");
+} else {
+    println("skipping user manual generation")
 }
-

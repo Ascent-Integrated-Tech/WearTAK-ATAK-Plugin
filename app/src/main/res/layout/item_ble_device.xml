@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -19,7 +18,7 @@
         android:ellipsize="end"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/connectButton" />
+        app:layout_constraintEnd_toStartOf="@id/actionButton" />
 
     <TextView
         android:id="@+id/deviceMac"
@@ -32,7 +31,7 @@
         android:ellipsize="end"
         app:layout_constraintTop_toBottomOf="@id/deviceName"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/connectButton" />
+        app:layout_constraintEnd_toStartOf="@id/actionButton" />
 
     <TextView
         android:id="@+id/rssiBadge"
@@ -58,11 +57,11 @@
         android:layout_marginStart="8dp"
         app:layout_constraintBaseline_toBaselineOf="@id/rssiBadge"
         app:layout_constraintStart_toEndOf="@id/rssiBadge"
-        app:layout_constraintEnd_toStartOf="@id/connectButton" />
+        app:layout_constraintEnd_toStartOf="@id/actionButton" />
 
     <Button
-        android:id="@+id/connectButton"
-        android:layout_width="96dp"
+        android:id="@+id/actionButton"
+        android:layout_width="110dp"
         android:layout_height="40dp"
         android:text="Connect"
         app:layout_constraintTop_toTopOf="parent"

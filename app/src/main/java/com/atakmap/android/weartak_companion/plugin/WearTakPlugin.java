@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -28,7 +29,7 @@ import gov.tak.platform.marshal.MarshalManager;
 
 import java.util.List;
 
-public class PluginTemplate implements IPlugin {
+public class WearTakPlugin implements IPlugin {
 
     IServiceController serviceController;
     Context pluginContext;
@@ -42,17 +43,35 @@ public class PluginTemplate implements IPlugin {
     private WearTakBleClient bleClient;
     private BleCotBridge cotBridge;
 
-    // ---------- UI (new) ----------
-    private TextView connectionStatusTV;     // id: connection_status (chip)
-    private Button scanButton;               // id: scanButton
-    private RecyclerView deviceList;         // id: deviceList
-    private TextView emptyState;             // id: emptyState
+    // ---------- Screen roots ----------
+    private View deviceScreenRoot;
+    private View settingsScreenRoot;
 
-    private View connectedCard;              // id: connectedCard
-    private TextView connectedDeviceTV;      // id: connectedDevice
-    private TextView connectedMacTV;         // id: connectedMac
+    // ---------- DEVICE SCREEN UI ----------
+    private TextView connectionStatusTV;     // chip
+    private Button scanButton;
+    private RecyclerView deviceList;
+    private TextView emptyState;
+
+    private View connectedCard;
+    private TextView connectedDeviceTV;
+    private TextView connectedMacTV;
+    private TextView connectedMetricsTV;
 
     private BleDeviceAdapter deviceAdapter;
+
+    // ---------- SETTINGS SCREEN UI ----------
+    private Button settingsBackButton;
+    private TextView settingsDeviceSubtitle;
+
+    private EditText takNameET;
+    private EditText takAddressET;
+    private EditText takPortET;
+    private EditText takUsernameET;
+    private EditText takPasswordET;
+
+    private Button sendSettingsButton;
+    private TextView settingsStatusTV;
 
     // ---------- State ----------
     private String connectionStatus = "DISCONNECTED";
@@ -72,7 +91,19 @@ public class PluginTemplate implements IPlugin {
     private Double selfLat;
     private Double selfLon;
 
-    public PluginTemplate(IServiceController serviceController) {
+    // ---------- UI status enum ----------
+    private enum UiStatus {
+        DISCONNECTED,
+        READY,
+        SCANNING,
+        CONNECTING,
+        CONNECTED,
+        ERROR
+    }
+
+    private UiStatus uiStatus = UiStatus.DISCONNECTED;
+
+    public WearTakPlugin(IServiceController serviceController) {
         this.serviceController = serviceController;
 
         final PluginContextProvider ctxProvider =
@@ -109,7 +140,6 @@ public class PluginTemplate implements IPlugin {
 
         uiService.addToolbarItem(toolbarItem);
 
-        // Ensure we have a pluginContext
         if (pluginContext == null && serviceController != null) {
             PluginContextProvider ctxProvider =
                     serviceController.getService(PluginContextProvider.class);
@@ -126,14 +156,10 @@ public class PluginTemplate implements IPlugin {
             return;
         }
 
-        // Lazily create BLE client once
         if (bleClient == null) {
-            bleClient = new WearTakBleClient(pluginContext, new WearTakBleClient.StatusListener() {
-                @Override
-                public void onConnectionStatusChanged(final boolean connected) {
-                    connectionStatus = connected ? "CONNECTED" : "DISCONNECTED";
-                    mainHandler.post(() -> applyConnectionUiState(connected));
-                }
+            bleClient = new WearTakBleClient(pluginContext, connected -> {
+                connectionStatus = connected ? "CONNECTED" : "DISCONNECTED";
+                mainHandler.post(() -> applyConnectionUiState(connected));
             });
         }
 
@@ -149,9 +175,9 @@ public class PluginTemplate implements IPlugin {
             public void onReady() {
                 Log.d(TAG, "BLE ready; JSON notifications enabled");
                 mainHandler.post(() -> {
+                    setUiStatus(UiStatus.CONNECTED); // show as connected/ready
                     if (connectionStatusTV != null) {
                         connectionStatusTV.setText("CONNECTED (READY)");
-                        connectionStatusTV.setVisibility(View.VISIBLE);
                     }
                 });
             }
@@ -159,46 +185,23 @@ public class PluginTemplate implements IPlugin {
             @Override
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON: " + jsonLine);
-
                 if (cotBridge != null) {
-                    try {
-                        org.json.JSONObject env = new org.json.JSONObject(jsonLine);
-                        String msgType = env.optString("msgType", "");
-                        if ("watch_info".equals(msgType)) {
-                            org.json.JSONObject p = env.optJSONObject("payload");
-                            if (p != null) {
-                                String pairedUid = p.optString("uid", "");
-                                String cs = p.optString("cs", "");
-                                Log.i(TAG, "PAIR ESTABLISHED uid=" + pairedUid + " cs=" + cs);
-
-                                pluginContext.getSharedPreferences("wtk_pairing", Context.MODE_PRIVATE)
-                                        .edit()
-                                        .putString("paired_uid", pairedUid)
-                                        .putString("paired_callsign", cs)
-                                        .apply();
-                            }
-                        }
-                    } catch (Throwable t) {
-                        Log.w(TAG, "onJson: failed to parse envelope", t);
-                    }
-
                     cotBridge.handleJsonFromWearTak(jsonLine);
                 }
+
+                // Stub: if you later parse metrics here (HR/bat/steps), update connectedMetricsTV
+                // mainHandler.post(() -> connectedMetricsTV.setText("HR: 82   Bat: 100   Steps: 1200"));
             }
 
             @Override
-            public void onPaired(String deviceId, String callsign) {
-                // optional: update UI if desired
-            }
+            public void onPaired(String deviceId, String callsign) { }
 
             @Override
             public void onError(String msg) {
                 Log.w(TAG, "BLE JSON error: " + msg);
                 mainHandler.post(() -> {
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText("BLE ERROR");
-                        connectionStatusTV.setVisibility(View.VISIBLE);
-                    }
+                    setUiStatus(UiStatus.ERROR);
+                    if (connectionStatusTV != null) connectionStatusTV.setText("BLE ERROR");
                 });
             }
         });
@@ -226,48 +229,72 @@ public class PluginTemplate implements IPlugin {
                     .setMetaValue(Pane.PREFERRED_HEIGHT_RATIO, 0.5D)
                     .build();
 
-            // ---- Bind UI ----
+            // ---- Screen roots ----
+            deviceScreenRoot = paneView.findViewById(R.id.deviceScreenRoot);
+            settingsScreenRoot = paneView.findViewById(R.id.settingsScreenRoot);
+
+            // ---- Device screen bind ----
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             scanButton = paneView.findViewById(R.id.scanButton);
-
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
 
             connectedCard = paneView.findViewById(R.id.connectedCard);
             connectedDeviceTV = paneView.findViewById(R.id.connectedDevice);
             connectedMacTV = paneView.findViewById(R.id.connectedMac);
+            connectedMetricsTV = paneView.findViewById(R.id.connectedMetrics);
+
+            // ---- Settings screen bind ----
+            settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
+            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
+
+            takNameET = paneView.findViewById(R.id.takName);
+            takAddressET = paneView.findViewById(R.id.takAddress);
+            takPortET = paneView.findViewById(R.id.takPort);
+            takUsernameET = paneView.findViewById(R.id.takUsername);
+            takPasswordET = paneView.findViewById(R.id.takPassword);
+
+            sendSettingsButton = paneView.findViewById(R.id.sendSettingsButton);
+            settingsStatusTV = paneView.findViewById(R.id.settingsStatus);
 
             if (connectionStatusTV != null) {
                 connectionStatusTV.setText(connectionStatus);
                 connectionStatusTV.setVisibility(View.VISIBLE);
             }
 
-            // ---- Setup RecyclerView ----
+            // ---- RecyclerView setup ----
             deviceList.setLayoutManager(new LinearLayoutManager(pluginContext));
 
-            deviceAdapter = new BleDeviceAdapter(device -> {
-                selectedDevice = device;
+            deviceAdapter = new BleDeviceAdapter(new BleDeviceAdapter.Listener() {
+                @Override
+                public void onConnectClicked(WearTakBleClient.DiscoveredDevice device) {
+                    selectedDevice = device;
 
-                Log.d(TAG, "UI connect clicked: " + device.address);
+                    Log.d(TAG, "UI connect clicked: " + device.address);
 
-                if (bleClient != null) {
-                    bleClient.resetSession("UI device selected " + device.address);
-                    bleClient.connectToSelectedDevice(device);
+                    setUiStatus(UiStatus.CONNECTING);
+
+                    if (bleClient != null) {
+                        bleClient.resetSession("UI device selected " + device.address);
+                        bleClient.connectToSelectedDevice(device);
+                    }
+
+                    if (deviceAdapter != null) {
+                        deviceAdapter.setConnecting(device.address);
+                    }
+
+                    if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
+                    if (connectedDeviceTV != null) connectedDeviceTV.setText(safeName(device));
+                    if (connectedMacTV != null) connectedMacTV.setText(device.address);
+                    if (connectedMetricsTV != null) connectedMetricsTV.setText("HR: —   Bat: —   Steps: —");
                 }
 
-                if (connectionStatusTV != null) {
-                    connectionStatusTV.setText("CONNECTING");
-                    connectionStatusTV.setVisibility(View.VISIBLE);
+                @Override
+                public void onSettingsClicked(WearTakBleClient.DiscoveredDevice device) {
+                    // Only meaningful when connected; adapter only offers it in that state
+                    selectedDevice = device;
+                    showSettingsScreen();
                 }
-
-                if (deviceAdapter != null) {
-                    deviceAdapter.setConnecting(device.address);
-                }
-
-                // Show connected card immediately with selected info (will become real CONNECTED on callback)
-                if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
-                if (connectedDeviceTV != null) connectedDeviceTV.setText(safeName(device));
-                if (connectedMacTV != null) connectedMacTV.setText(device.address);
             });
 
             deviceList.setAdapter(deviceAdapter);
@@ -276,6 +303,8 @@ public class PluginTemplate implements IPlugin {
             scanButton.setOnClickListener(v -> {
                 int sessionId = ++scanSessionCount;
                 LogX.i(TAG, "UI: Scan pressed. session=" + sessionId);
+
+                setUiStatus(UiStatus.SCANNING);
 
                 if (bleClient != null) {
                     bleClient.resetSession("UI Scan pressed session=" + sessionId);
@@ -290,17 +319,51 @@ public class PluginTemplate implements IPlugin {
                 }
 
                 if (emptyState != null) emptyState.setVisibility(View.GONE);
-
-                if (connectionStatusTV != null) {
-                    connectionStatusTV.setText("SCANNING");
-                    connectionStatusTV.setVisibility(View.VISIBLE);
-                }
-
-                // optionally hide connected card when scanning
                 if (connectedCard != null) connectedCard.setVisibility(View.GONE);
 
                 scanForDevices(sessionId);
             });
+
+            // ---- Settings back ----
+            settingsBackButton.setOnClickListener(v -> showDeviceScreen());
+
+            // ---- Send settings (stub) ----
+            sendSettingsButton.setOnClickListener(v -> {
+                // For now, just build a JSON and "pretend send".
+                // Later this will call a write method on WearTakBleClient (requires A11C write path + protocol).
+                String name = txt(takNameET);
+                String addr = txt(takAddressET);
+                String port = txt(takPortET);
+                String user = txt(takUsernameET);
+                String pass = txt(takPasswordET);
+
+                String deviceId = (selectedDevice != null) ? selectedDevice.address : "—";
+
+                String json = "{"
+                        + "\"msgType\":\"set_tak_server\","
+                        + "\"payload\":{"
+                        + "\"device\":\"" + escape(deviceId) + "\","
+                        + "\"name\":\"" + escape(name) + "\","
+                        + "\"address\":\"" + escape(addr) + "\","
+                        + "\"port\":" + safeInt(port, 0) + ","
+                        + "\"username\":\"" + escape(user) + "\","
+                        + "\"password\":\"" + escape(pass) + "\""
+                        + "}"
+                        + "}";
+
+                Log.d(TAG, "SETTINGS STUB JSON -> " + json);
+
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Stubbed send. (Not yet written to BLE)");
+                }
+
+                // TODO later:
+                // bleClient.writeJson(json);
+            });
+
+            // Start on device screen
+            showDeviceScreen();
+            setUiStatus(UiStatus.DISCONNECTED);
         }
 
         if (!uiService.isPaneVisible(templatePane)) {
@@ -311,6 +374,7 @@ public class PluginTemplate implements IPlugin {
     private void scanForDevices(final int sessionId) {
         if (bleClient == null) {
             LogX.w(TAG, "scanForDevices: bleClient is null. session=" + sessionId);
+            setUiStatus(UiStatus.ERROR);
             return;
         }
 
@@ -320,23 +384,12 @@ public class PluginTemplate implements IPlugin {
             scannedDevices.clear();
             if (deviceAdapter != null) deviceAdapter.setDevices(scannedDevices);
             if (emptyState != null) emptyState.setVisibility(View.GONE);
-
-            if (connectionStatusTV != null) {
-                connectionStatusTV.setText("SCANNING");
-                connectionStatusTV.setVisibility(View.VISIBLE);
-            }
         });
 
         bleClient.scanForDevices(new WearTakBleClient.ScanListener() {
             @Override
             public void onDeviceFound(WearTakBleClient.DiscoveredDevice device) {
-                LogX.d(TAG, "scanForDevices: FOUND session=" + sessionId
-                        + " name=" + device.name
-                        + " addr=" + device.address
-                        + " rssi=" + device.rssi);
-
                 mainHandler.post(() -> {
-                    // upsert by address (your logic, kept)
                     int idx = -1;
                     for (int i = 0; i < scannedDevices.size(); i++) {
                         if (scannedDevices.get(i).address.equals(device.address)) {
@@ -355,24 +408,18 @@ public class PluginTemplate implements IPlugin {
             @Override
             public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
                 mainHandler.post(() -> {
-                    if (emptyState != null) emptyState.setVisibility(scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
-
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText("READY");
-                        connectionStatusTV.setVisibility(View.VISIBLE);
+                    if (scannedDevices.isEmpty()) {
+                        if (emptyState != null) emptyState.setVisibility(View.VISIBLE);
                     }
+                    setUiStatus(UiStatus.READY);
                 });
             }
 
             @Override
             public void onScanError(String msg) {
                 LogX.w(TAG, "scanForDevices: ERROR session=" + sessionId + " msg=" + msg);
-
                 mainHandler.post(() -> {
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText("SCAN ERROR");
-                        connectionStatusTV.setVisibility(View.VISIBLE);
-                    }
+                    setUiStatus(UiStatus.ERROR);
                     if (emptyState != null) {
                         emptyState.setText("Scan error: " + msg);
                         emptyState.setVisibility(View.VISIBLE);
@@ -382,31 +429,102 @@ public class PluginTemplate implements IPlugin {
         });
     }
 
-    private void applyConnectionUiState(boolean connected) {
-        if (connectionStatusTV != null) {
-            connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
-            connectionStatusTV.setVisibility(View.VISIBLE);
+    // -------------------- Screen nav --------------------
+
+    private void showSettingsScreen() {
+        if (settingsDeviceSubtitle != null) {
+            String label = (selectedDevice != null)
+                    ? (safeName(selectedDevice) + "  •  " + selectedDevice.address)
+                    : "—";
+            settingsDeviceSubtitle.setText(label);
         }
+        if (deviceScreenRoot != null) deviceScreenRoot.setVisibility(View.GONE);
+        if (settingsScreenRoot != null) settingsScreenRoot.setVisibility(View.VISIBLE);
+    }
 
+    private void showDeviceScreen() {
+        if (settingsScreenRoot != null) settingsScreenRoot.setVisibility(View.GONE);
+        if (deviceScreenRoot != null) deviceScreenRoot.setVisibility(View.VISIBLE);
+    }
+
+    // -------------------- Chip status styling --------------------
+
+    private void setUiStatus(UiStatus s) {
+        uiStatus = s;
+        applyStatusChip();
+    }
+
+    private void applyConnectionUiState(boolean connected) {
         if (connected) {
-            if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
+            setUiStatus(UiStatus.CONNECTED);
 
+            if (connectedCard != null) connectedCard.setVisibility(View.VISIBLE);
             if (selectedDevice != null) {
                 if (connectedDeviceTV != null) connectedDeviceTV.setText(safeName(selectedDevice));
                 if (connectedMacTV != null) connectedMacTV.setText(selectedDevice.address);
+
                 if (deviceAdapter != null) deviceAdapter.setConnected(selectedDevice.address);
             }
         } else {
-            // keep card visible or hide; your choice:
-            // if (connectedCard != null) connectedCard.setVisibility(View.GONE);
-
+            setUiStatus(UiStatus.DISCONNECTED);
             if (deviceAdapter != null) deviceAdapter.clearConnectionMarkers();
         }
     }
+
+    private void applyStatusChip() {
+        if (connectionStatusTV == null) return;
+
+        switch (uiStatus) {
+            case CONNECTED:
+                connectionStatusTV.setText("CONNECTED");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_success);
+                break;
+            case CONNECTING:
+                connectionStatusTV.setText("CONNECTING");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_warning);
+                break;
+            case SCANNING:
+                connectionStatusTV.setText("SCANNING");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_warning);
+                break;
+            case READY:
+                connectionStatusTV.setText("READY");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_neutral);
+                break;
+            case ERROR:
+                connectionStatusTV.setText("ERROR");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_error);
+                break;
+            case DISCONNECTED:
+            default:
+                connectionStatusTV.setText("DISCONNECTED");
+                connectionStatusTV.setBackgroundResource(R.drawable.bg_chip_neutral);
+                break;
+        }
+
+        connectionStatusTV.setVisibility(View.VISIBLE);
+    }
+
+    // -------------------- Helpers --------------------
 
     private static String safeName(WearTakBleClient.DiscoveredDevice d) {
         if (d == null) return "—";
         if (d.name != null && !d.name.isEmpty()) return d.name;
         return "Unknown";
+    }
+
+    private static String txt(EditText e) {
+        if (e == null) return "";
+        CharSequence cs = e.getText();
+        return cs == null ? "" : cs.toString().trim();
+    }
+
+    private static int safeInt(String s, int def) {
+        try { return Integer.parseInt(s); } catch (Throwable t) { return def; }
+    }
+
+    private static String escape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
