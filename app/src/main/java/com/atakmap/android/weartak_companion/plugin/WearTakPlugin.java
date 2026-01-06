@@ -44,6 +44,7 @@ public class WearTakPlugin implements IPlugin {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private WearTakBleClient bleClient;
+    private BleCotBridge bleCotBridge;
 
     // Screen roots
     private View deviceScreenRoot;
@@ -155,6 +156,11 @@ public class WearTakPlugin implements IPlugin {
             });
         }
 
+        if (bleCotBridge == null) {
+            bleCotBridge = new BleCotBridge();
+            Log.i(TAG, "BleCotBridge initialized in plugin");
+        }
+
         bleClient.start();
 
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
@@ -171,7 +177,14 @@ public class WearTakPlugin implements IPlugin {
             @Override
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON: " + jsonLine);
-
+                // Forward watch packets into ATAK CoT pipeline
+                if (bleCotBridge != null) {
+                    try {
+                        bleCotBridge.handleJsonFromWearTak(jsonLine);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "BleCotBridge threw while handling RX JSON", t);
+                    }
+                }
                 try {
                     JSONObject env = new JSONObject(jsonLine);
                     String msgType = env.optString("msgType", "");
@@ -231,6 +244,9 @@ public class WearTakPlugin implements IPlugin {
         uiService.removeToolbarItem(toolbarItem);
         if (bleClient != null) bleClient.stop();
     }
+
+    private View addServerButton;
+    private Button deleteServerButton;
 
     private void showPane() {
         if (templatePane == null) {
@@ -299,6 +315,25 @@ public class WearTakPlugin implements IPlugin {
 
             takServerListRV = paneView.findViewById(R.id.takServerList);
             takServerListRV.setLayoutManager(new LinearLayoutManager(pluginContext));
+
+            addServerButton = paneView.findViewById(R.id.addServerButton);
+            deleteServerButton = paneView.findViewById(R.id.deleteServerButton);
+
+            addServerButton.setOnClickListener(v -> {
+                addNewServer();
+                applyServersToUi(currentServerList);         // refresh list + selection
+                // optionally auto-select new server
+                currentSelectedServerIndex = currentServerList.size() - 1;
+                if (takServerAdapter != null) takServerAdapter.setSelectedIndex(currentSelectedServerIndex);
+                TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+                if (item != null) populateFieldsFromItem(item);
+            });
+
+            deleteServerButton.setOnClickListener(v -> {
+                if (currentSelectedServerIndex < 0) return;
+                deleteSelectedServer();
+                applyServersToUi(currentServerList);
+            });
 
             takServerAdapter = new TakServerListAdapter(new TakServerListAdapter.Listener() {
                 @Override
@@ -499,6 +534,87 @@ public class WearTakPlugin implements IPlugin {
         if (settingsStatusTV != null) {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
+    }
+
+    private void addNewServer() {
+        // Save current edits before switching selection
+        commitFieldsToSelectedItem();
+
+        TakServerItem item = new TakServerItem();
+        item.isEnabled = false;   // safer default
+        item.name = "New Server";
+        item.address = "";
+        item.port = 8089;
+
+        // ignore P12 for now (your request)
+        item.isP12Cert = false;
+        item.username = "";
+        item.password = "";
+        item.p12Cert = "";
+        item.p12CertPassword = "";
+
+        currentServerList.add(item);
+
+        // Re-render list + pick selection
+        int newIndex = currentServerList.size() - 1;
+
+        if (takServerAdapter != null) {
+            takServerAdapter.setItems(currentServerList);
+            takServerAdapter.setSelectedIndex(newIndex);
+        }
+        currentSelectedServerIndex = newIndex;
+
+        // Drive UI fields off the selected index (consistent w your adapter listener model)
+        populateFieldsFromItem(item);
+
+        if (settingsStatusTV != null) settingsStatusTV.setText("Added server (not sent yet).");
+    }
+
+    private void deleteSelectedServer() {
+        int idx = currentSelectedServerIndex;
+
+        if (idx < 0 || idx >= currentServerList.size()) {
+            if (settingsStatusTV != null) settingsStatusTV.setText("No server selected to delete.");
+            return;
+        }
+
+        // Remove
+        currentServerList.remove(idx);
+
+        // Decide new selection
+        if (currentServerList.isEmpty()) {
+            currentSelectedServerIndex = -1;
+
+            if (takServerAdapter != null) {
+                takServerAdapter.setItems(currentServerList);
+                takServerAdapter.setSelectedIndex(-1);
+            }
+
+            // Clear fields
+            setText(takNameET, "");
+            setText(takAddressET, "");
+            setText(takPortET, "");
+            setText(takUsernameET, "");
+            setText(takPasswordET, "");
+
+            if (settingsStatusTV != null) settingsStatusTV.setText("Deleted server (not sent yet).");
+            return;
+        }
+
+        // Clamp index to last valid
+        if (idx >= currentServerList.size()) idx = currentServerList.size() - 1;
+
+        currentSelectedServerIndex = idx;
+        TakServerItem item = currentServerList.get(idx);
+
+        if (takServerAdapter != null) {
+            takServerAdapter.setItems(currentServerList);
+            takServerAdapter.setSelectedIndex(idx);
+        }
+
+        populateFieldsFromItem(item);
+
+        if (settingsStatusTV != null) settingsStatusTV.setText("Deleted server (not sent yet).");
     }
 
     // ---------- screen nav ----------

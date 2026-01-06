@@ -1,5 +1,6 @@
 package com.atakmap.android.weartak_companion.plugin;
 
+import android.annotation.SuppressLint;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -55,7 +56,7 @@ public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdap
     }
 
     @Override
-    public void onBindViewHolder(@NonNull Holder h, int position) {
+    public void onBindViewHolder(@NonNull Holder h, @SuppressLint("RecyclerView") int position) {
         TakServerItem item = items.get(position);
 
         h.name.setText((item.name == null || item.name.isEmpty()) ? "Unnamed Server" : item.name);

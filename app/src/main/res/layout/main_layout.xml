@@ -120,6 +120,27 @@
             android:paddingTop="8dp"
             android:paddingBottom="4dp" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end">
+
+            <ImageButton
+                android:id="@+id/addServerButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="Add Server"
+                android:src="@drawable/ic_plus_circle"
+                android:background="@android:color/transparent" />
+
+            <Button
+                android:id="@+id/deleteServerButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Delete" />
+        </LinearLayout>
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/takServerList"
             android:layout_width="match_parent"

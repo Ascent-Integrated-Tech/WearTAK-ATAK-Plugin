@@ -978,6 +978,10 @@ public class BleCotBridge {
                     sendChat(envelopeJson);
                     break;
 
+                case "watch_info":
+                    handleWatchInfo(envelopeJson);
+                    break;
+
                 default:
                     Log.w(TAG, "handleJsonFromWearTak: unknown msg_type=" + msgType);
                     break;
@@ -986,6 +990,10 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
         }
+    }
+
+    private void handleWatchInfo(String json) {
+        Log.i(TAG, "Watch Info Received: " + json);
     }
 
     // =========================================================================================
