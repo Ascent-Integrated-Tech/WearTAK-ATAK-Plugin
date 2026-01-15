@@ -208,7 +208,7 @@ public class WearTakPlugin implements IPlugin {
                         }
                     }
 
-                    // [Unverified] optional ack
+                    // if storing the settings went fine on the watch tell the user in the dropdown.
                     if ("settings_set_ack".equals(msgType)) {
                         JSONObject p = env.optJSONObject("payload");
                         boolean ok = (p != null) && p.optBoolean("ok", false);

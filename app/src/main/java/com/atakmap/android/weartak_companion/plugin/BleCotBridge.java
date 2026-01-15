@@ -964,7 +964,6 @@ public class BleCotBridge {
                 case "marker":
                     // Marker payload -> PLI / watch entity update
                     sendMarkerCot(envelopeJson);
-
                     break;
 
                 case "emergency":
@@ -983,7 +982,7 @@ public class BleCotBridge {
                     break;
 
                 default:
-                    Log.w(TAG, "handleJsonFromWearTak: unknown msg_type=" + msgType);
+//                    Log.w(TAG, "handleJsonFromWearTak: unknown msg_type=" + msgType);
                     break;
             }
 
