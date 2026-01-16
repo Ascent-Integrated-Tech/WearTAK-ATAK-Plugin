@@ -252,7 +252,10 @@ public class WearTakBleClient {
                 if (!hasService) return;
 
                 String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
-                String strippedName = displayName.split("-")[1];
+                String strippedName = displayName;
+                assert displayName != null;
+                String[] parts = displayName.split("-");
+                if (parts.length >= 2) strippedName = parts[1];
                 DiscoveredDevice dd = new DiscoveredDevice(strippedName, addr, rssi);
 
                 discovered.put(addr, dd);

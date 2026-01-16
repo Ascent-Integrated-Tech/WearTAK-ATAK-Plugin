@@ -1,8 +1,8 @@
 package com.atakmap.android.weartak_companion.plugin;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atak.plugins.impl.PluginLayoutInflater;
+import com.atak.plugins.impl.IToolbarItem;
 import com.atakmap.android.maps.MapView;
 
 import org.json.JSONArray;
@@ -32,16 +33,13 @@ import gov.tak.api.plugin.IServiceController;
 import gov.tak.api.ui.IHostUIService;
 import gov.tak.api.ui.Pane;
 import gov.tak.api.ui.PaneBuilder;
-import gov.tak.api.ui.ToolbarItem;
-import gov.tak.api.ui.ToolbarItemAdapter;
-import gov.tak.platform.marshal.MarshalManager;
+import gov.tak.platform.ui.MotionEvent;
 
-public class WearTakPlugin implements IPlugin {
+public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     IServiceController serviceController;
     Context pluginContext;
     IHostUIService uiService;
-    ToolbarItem toolbarItem;
     Pane templatePane;
 
     private static final String TAG = "WTK/Plugin";
@@ -70,7 +68,7 @@ public class WearTakPlugin implements IPlugin {
 
     // Settings screen
     private Button settingsBackButton;
-    private TextView settingsDeviceSubtitle;
+//    private TextView settingsDeviceSubtitle;
 
     private RecyclerView takServerListRV;
     private TakServerListAdapter takServerAdapter;
@@ -85,7 +83,6 @@ public class WearTakPlugin implements IPlugin {
     private Button sendSettingsButton;
     private Button refreshSettingsButton;
     private EditText watchCallsignET;
-    private Button changeWatchCallsignButton; // if you use it
     private TextView settingsStatusTV;
 
     // State
@@ -94,7 +91,6 @@ public class WearTakPlugin implements IPlugin {
     // last received snapshot settings
     private JSONObject lastSettingsPayload = null;
     private List<TakServerItem> currentServerList = new ArrayList<>();
-    private Integer currentWatchReportIntSecs = null;
     private int currentSelectedServerIndex = -1;
 
     // Connection state
@@ -203,28 +199,13 @@ public class WearTakPlugin implements IPlugin {
         }
 
         uiService = serviceController.getService(IHostUIService.class);
-        MapView.getMapView();
-
-        toolbarItem = new ToolbarItem.Builder(
-                pluginContext.getString(R.string.app_name),
-                MarshalManager.marshal(
-                        pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
-                        android.graphics.drawable.Drawable.class,
-                        gov.tak.api.commons.graphics.Bitmap.class))
-                .setListener(new ToolbarItemAdapter() {
-                    @Override
-                    public void onClick(ToolbarItem item) {
-                        showPane();
-                    }
-                })
-                .build();
+        MapView mapView = MapView.getMapView();
     }
 
     @SuppressLint("NotifyDataSetChanged")
     @Override
     public void onStart() {
-        if (uiService == null) return;
-        uiService.addToolbarItem(toolbarItem);
+        this.serviceController.registerComponent(IToolbarItem.class, this);
 
         if (pluginContext == null && serviceController != null) {
             PluginContextProvider ctxProvider = serviceController.getService(PluginContextProvider.class);
@@ -234,6 +215,8 @@ public class WearTakPlugin implements IPlugin {
             }
         }
 
+        assert serviceController != null;
+        uiService = serviceController.getService(IHostUIService.class); // safe refresh
         if (pluginContext == null) {
             Log.w(TAG, "onStart: pluginContext is null; skipping BLE init");
             return;
@@ -248,7 +231,10 @@ public class WearTakPlugin implements IPlugin {
 
                     if (connected) {
                         // Show the card if we have a selected device (common path).
-                        if (selectedDevice != null) showConnectedCard(selectedDevice);
+                        if (selectedDevice != null) {
+                            currentConnectedAddress = selectedDevice.address;
+                            showConnectedCard(selectedDevice);
+                        }
                     } else {
                         hideConnectedCard();
                         currentConnectedAddress = null;
@@ -265,6 +251,8 @@ public class WearTakPlugin implements IPlugin {
                             deviceAdapter.clearConnectionMarkers();
                         }
                     }
+
+                    refreshDeviceListUi();
                 });
             });
         }
@@ -359,8 +347,6 @@ public class WearTakPlugin implements IPlugin {
 
     @Override
     public void onStop() {
-        if (uiService == null) return;
-        uiService.removeToolbarItem(toolbarItem);
         if (bleClient != null) bleClient.stop();
     }
 
@@ -523,20 +509,27 @@ public class WearTakPlugin implements IPlugin {
             showDeviceScreen();
         }
 
+        if (uiService == null) return;
+
         if (!uiService.isPaneVisible(templatePane)) {
             uiService.showPane(templatePane, null);
+
+            // only reset when opening
+            resetDeviceScreenOnOpen();
+            requestSettingsFromWatch("showPane");
+        } else {
+            uiService.closePane(templatePane);
         }
-
-        // Dropdown opened reset (your new behavior)
-        resetDeviceScreenOnOpen();
-
-        // request settings on open (if already connected)
-        requestSettingsFromWatch("showPane");
     }
 
     private void refreshDeviceListUi() {
         // Create a copy so we don't mutate scannedDevices ordering if you care
-        ArrayList<WearTakBleClient.DiscoveredDevice> copy = new ArrayList<>(scannedDevices);
+        ArrayList<WearTakBleClient.DiscoveredDevice> copy = new ArrayList<>();
+        for (WearTakBleClient.DiscoveredDevice d : scannedDevices) {
+            if (d == null || d.address == null) continue;
+            if (currentConnectedAddress != null && currentConnectedAddress.equals(d.address)) continue;
+            copy.add(d);
+        }
 
         Collections.sort(copy, (a, b) -> {
             // 1) connected first
@@ -599,7 +592,6 @@ public class WearTakPlugin implements IPlugin {
                 mainHandler.post(() -> {
                     upsertDevice(device);
                     refreshDeviceListUi();
-                    if (deviceAdapter != null) deviceAdapter.setDevices(scannedDevices);
                 });
             }
 
@@ -831,12 +823,12 @@ public class WearTakPlugin implements IPlugin {
     // ---------- screen nav ----------
 
     private void showSettingsScreen() {
-        if (settingsDeviceSubtitle != null) {
-            String label = (selectedDevice != null)
-                    ? ((selectedDevice.name == null ? "WearTAK" : selectedDevice.name) + " • " + selectedDevice.address)
-                    : "—";
-            settingsDeviceSubtitle.setText(label);
-        }
+//        if (settingsDeviceSubtitle != null) {
+//            String label = (selectedDevice != null)
+//                    ? ((selectedDevice.name == null ? "WearTAK" : selectedDevice.name) + " • " + selectedDevice.address)
+//                    : "—";
+//            settingsDeviceSubtitle.setText(label);
+//        }
         if (deviceScreenRoot != null) deviceScreenRoot.setVisibility(View.GONE);
         if (settingsScreenRoot != null) settingsScreenRoot.setVisibility(View.VISIBLE);
     }
@@ -931,6 +923,26 @@ public class WearTakPlugin implements IPlugin {
             currentServerList = parseTakServerList(payload);
             mainHandler.post(() -> applyServersToUi(currentServerList));
         }
+    }
+
+    @Override
+    public String getShortDescription() {
+        return pluginContext.getString(R.string.app_name);
+    }
+
+    @Override
+    public Drawable getIcon() {
+        return pluginContext.getResources().getDrawable(R.drawable.weartak_companion_plugin);
+    }
+
+    @Override
+    public String getDescription() {
+        return pluginContext.getString(R.string.app_desc);
+    }
+
+    @Override
+    public void onItemEvent(MotionEvent motionEvent) {
+        showPane();
     }
 
 }
