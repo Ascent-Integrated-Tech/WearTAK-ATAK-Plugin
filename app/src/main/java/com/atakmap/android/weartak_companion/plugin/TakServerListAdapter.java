@@ -5,6 +5,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -18,6 +19,7 @@ public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdap
     public interface Listener {
         void onSelected(int index);
         void onEnabledToggled(int index, boolean enabled);
+        void onDeleteClicked(int index);
     }
 
     private final Listener listener;
@@ -78,6 +80,15 @@ public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdap
             notifyDataSetChanged();
             if (listener != null) listener.onSelected(position);
         });
+
+        // NEW: delete button
+        if (h.deleteBtn != null) {
+            h.deleteBtn.setOnClickListener(v -> {
+                int idx = h.getBindingAdapterPosition();
+                if (idx == RecyclerView.NO_POSITION) return;
+                if (listener != null) listener.onDeleteClicked(idx);
+            });
+        }
     }
 
     @Override
@@ -90,13 +101,14 @@ public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdap
         TextView name;
         TextView sub;
         CheckBox enabled;
-
+        ImageButton deleteBtn;
         Holder(@NonNull View itemView) {
             super(itemView);
             root = itemView;
             name = itemView.findViewById(R.id.serverName);
             sub = itemView.findViewById(R.id.serverSub);
             enabled = itemView.findViewById(R.id.serverEnabled);
+            deleteBtn = itemView.findViewById(R.id.serverDelete);
         }
     }
 }

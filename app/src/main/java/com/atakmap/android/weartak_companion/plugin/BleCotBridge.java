@@ -10,17 +10,13 @@ import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.Marker;
-import com.atakmap.android.user.PlacePointTool;
 import com.atakmap.comms.CotDispatcher;
 import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.coremap.maps.coords.GeoPoint;
-import com.atakmap.coremap.maps.coords.GeoPointMetaData;
 
 import org.json.JSONObject;
 
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.UUID;
@@ -34,7 +30,7 @@ public class BleCotBridge {
 
     private MapView mapView;
     private String myUid;
-    private String myCallsign;
+    private String pluginCallsign;
     private Boolean watchAsSource = false;
 
     public BleCotBridge() {
@@ -42,69 +38,13 @@ public class BleCotBridge {
         internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
         mapView = getMapView();
         myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
-        myCallsign = mapView.getDeviceCallsign();  // cs of eud
+        pluginCallsign = mapView.getDeviceCallsign();  // cs of eud
         Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
     }
 
     // =========================================================================================
     // 1) STANDARD PLI (JSON envelope input)
     // =========================================================================================
-    /*public void sendStandardPli(String envelopeJson) {
-        try {
-            JSONObject env = new JSONObject(envelopeJson);
-            JSONObject p = env.optJSONObject("payload");
-            if (p == null) {
-                Log.w(TAG, "sendStandardPli: missing payload");
-                return;
-            }
-
-            // ----- Pull values from JSON (fall back safely) -----
-            // uid: prefer payload.marker_id if present (watch marker envelope), else msg_id, else random
-            String uid = optString(p, "callsign",
-                    optString(env, "msg_id", UUID.randomUUID().toString()));
-
-            // time/start/stale: prefer payload.time_start/time_stale else now/+2min
-            String time = optString(p, "time_start", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "time_stale", iso8601(System.currentTimeMillis() + 120000));
-
-            // callsign/remarks/group/track: if not present, use safe defaults
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
-            String remarks  = optString(p, "remarks", "WearTAK PLI");
-            String role     = optString(p, "role", "member");
-            String teamValue= optString(p, "team", "Blue");
-
-            double courseDeg = optDouble(p, "course", 0.0);
-            double speedMps  = optDouble(p, "speed", 0.0);
-
-            // Point: v1 you want ATAK EUD location, not payload lat/lon
-            EudFix fix = getEudFix();
-            double lat = fix.lat, lon = fix.lon, hae = fix.hae, ce = fix.ce, le = fix.le;
-
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0' uid='" + escapeXml(uid) + "' type='a-f-G-U-C' "
-                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale) + "' how='m-g'>"
-                            + "<point lat='" + String.format("%.6f", lat)
-                            + "' lon='" + String.format("%.6f", lon)
-                            + "' hae='" + String.format("%.1f", hae)
-                            + "' ce='" + trimDouble(ce) + "' le='" + trimDouble(le) + "'/>"
-                            + "<detail>"
-                            + "<remarks>" + escapeXml(remarks) + "</remarks>"
-                            + "<contact endpoint='*:-1:stcp' callsign='" + escapeXml(callsign) + "'/>"
-                            + "<__group role='" + escapeXml(role) + "' name='" + escapeXml(teamValue) + "'/>"
-                            + "<track course='" + trimDouble(courseDeg) + "' speed='" + trimDouble(speedMps) + "'/>"
-                            + "</detail>"
-                            + "</event>";
-
-            Log.d(TAG, "Standard PLI XML:\n" + xml);
-
-            dispatchExternal("PLI", xml);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error in sendStandardPli(json)", e);
-        }
-    }*/
-
     public void sendStandardPli(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
@@ -122,7 +62,7 @@ public class BleCotBridge {
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120000));
 
             // callsign + optional extras
-            String callsign   = myCallsign;
+            String callsign   = pluginCallsign;
             String remarks    = optString(p, "remarks", "WearTAK PLI");
             String role       = optString(p, "role", "member");
             String teamValue  = optString(p, "team", "Blue");
@@ -130,9 +70,7 @@ public class BleCotBridge {
             double courseDeg = optDouble(p, "course", 0.0);
             double speedMps  = optDouble(p, "speed", 0.0);
 
-            // NEW: battery + HR (optional)
-            // Marker payload currently uses "battery_percent"; HR key depends on your payload design.
-            // We'll support "battery_percent"/"bat" and "hr"/"heart_rate"/"heartRateBpm".
+            // battery and hr in details
             Integer batteryPct = optIntNullable(p, "battery_percent");
             if (batteryPct == null) batteryPct = optIntNullable(p, "bat");
 
@@ -140,7 +78,7 @@ public class BleCotBridge {
             if (hrBpm == null) hrBpm = optIntNullable(p, "heart_rate");
             if (hrBpm == null) hrBpm = optIntNullable(p, "heartRateBpm");
 
-            // Point: v1 uses ATAK EUD location
+            // Point: force ATAK EUD location
             EudFix fix = getEudFix();
             double lat = fix.lat, lon = fix.lon, hae = fix.hae, ce = fix.ce, le = fix.le;
 
@@ -176,56 +114,52 @@ public class BleCotBridge {
 
             Log.d(TAG, "Standard PLI XML:\n" + xml);
 
-//            dispatchExternal("PLI", xml);
-            dispatchCot("PLI", xml, true, true);
+            dispatchCot("PLI", xml);
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendStandardPli(json)", e);
         }
     }
 
-    private static String iconFromType(String type) {
-        if (type == null || type.isEmpty()) return null;
-        return COT_MAPPING_2525C + "/" + type.replace("-", "/");
-    }
-
     // =========================================================================================
     // DISPATCH (internal + external)
     // =========================================================================================
-    private void dispatchCot(String label, String xml, boolean injectLocal, boolean sendNetwork) {
-        CotEvent evt;
-        try {
-            evt = CotEvent.parse(xml);
-        } catch (Throwable t) {
-            Log.e(TAG, "dispatchCot(" + label + "): CotEvent.parse failed", t);
+    private void dispatchCot(String label, String xml) {
+        if (xml == null || xml.isEmpty()) {
+            Log.w(TAG, "dispatchCot(" + label + "): empty xml");
             return;
         }
 
-        if (injectLocal) {
-            if (internalCotDispatcher != null) {
-                try {
-                    internalCotDispatcher.dispatch(evt);
-                    Log.d(TAG, "dispatchCot(" + label + "): injected internal");
-                } catch (Throwable t) {
-                    Log.e(TAG, "dispatchCot(" + label + "): internal dispatch failed", t);
-                }
-            } else {
-                Log.w(TAG, "dispatchCot(" + label + "): internalCotDispatcher is null");
+        final CotEvent evt;
+        try {
+            evt = CotEvent.parse(xml);
+        } catch (Throwable t) {
+            Log.e(TAG, "dispatchCot(" + label + "): parse failed", t);
+            return;
+        }
+
+        // Internal
+        if (internalCotDispatcher != null) {
+            try {
+                internalCotDispatcher.dispatch(evt);
+                Log.d(TAG, "dispatchCot(" + label + "): dispatched INTERNAL");
+            } catch (Throwable t) {
+                Log.e(TAG, "dispatchCot(" + label + "): internal dispatch failed", t);
             }
         }
 
-        if (sendNetwork) {
-            if (externalCotDispatcher != null) {
-                try {
-                    externalCotDispatcher.dispatch(evt);
-                    Log.d(TAG, "dispatchCot(" + label + "): dispatched external");
-                } catch (Throwable t) {
-                    Log.e(TAG, "dispatchCot(" + label + "): external dispatch failed", t);
-                }
-            } else {
-                Log.w(TAG, "dispatchCot(" + label + "): externalCotDispatcher is null");
+        // External
+        if (externalCotDispatcher != null) {
+            try {
+                externalCotDispatcher.dispatch(evt);
+                Log.d(TAG, "dispatchCot(" + label + "): dispatched EXTERNAL");
+            } catch (Throwable t) {
+                Log.e(TAG, "dispatchCot(" + label + "): external dispatch failed", t);
             }
         }
+
+        // One-line summary
+        Log.i(TAG, "dispatchCot(" + label + "): done.)");
     }
 
     public void sendMarkerCot(String envelopeJson) {
@@ -257,9 +191,9 @@ public class BleCotBridge {
             String callsign = "";
             if (watchAsSource) {
                 // use watch callsign, if not, fallback to this EUD callsign.
-                callsign = optString(p, "cs", myCallsign);
+                callsign = optString(p, "cs", pluginCallsign);
             } else {
-                callsign = myCallsign;
+                callsign = pluginCallsign;
             }
 
             Integer batteryPct = optIntNullable(p, "bat");
@@ -341,119 +275,44 @@ public class BleCotBridge {
                             + "<detail>" + detail + "</detail>"
                             + "</event>";
 
-            Log.d(TAG, "Marker CoT XML:\n" + xml);
-//            dispatchExternal("MARKER", xml);
-            dispatchCot("MARKER", xml, true, true);
+            dispatchCot("MARKER", xml);
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendMarkerCot(json)", e);
         }
     }
 
-    /**
-     * Creates callsign like: "WEAROS-1075_161710Z" derived from ISO8601 time.
-     * Expects time like "2025-12-19T16:17:10.132Z"
-     */
-    private String buildMarkerCallsign(String baseCallsign, String isoTime) {
-        // Minimal, safe parsing: HHmmss from positions 11..19 if format matches
-        try {
-            if (isoTime != null && isoTime.length() >= 19 && isoTime.charAt(10) == 'T') {
-                String hh = isoTime.substring(11, 13);
-                String mm = isoTime.substring(14, 16);
-                String ss = isoTime.substring(17, 19);
-                return baseCallsign + "_" + hh + mm + ss + "Z";
-            }
-        } catch (Exception ignored) {}
-        return baseCallsign;
-    }
-
-    private String formatDouble(double v) {
-        // Avoid Locale issues; keep full-ish precision like your expected example
-        // (If you want fixed precision per field, tell me and I’ll match exactly.)
-        if (Double.isNaN(v) || Double.isInfinite(v)) return "0";
-        return String.format(Locale.US, "%.7f", v).replaceAll("0+$", "").replaceAll("\\.$", "");
-    }
-
-    /** Returns Integer if key exists and is parseable as int, else null. */
-    private Integer optIntNullable(JSONObject o, String key) {
-        if (o == null || key == null) return null;
-        if (!o.has(key) || o.isNull(key)) return null;
-
-        try {
-            Object v = o.get(key);
-            if (v instanceof Number) return ((Number) v).intValue();
-            if (v instanceof String) {
-                String s = ((String) v).trim();
-                if (s.isEmpty()) return null;
-                return (int) Double.parseDouble(s); // supports "87" or "87.0"
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-
-
     // =========================================================================================
     // 2) EMERGENCY ALERT (JSON envelope input)
+    //         a) handleEmergencyCot() routes json string to alert or cancel builder
+    //         b) sendEmergencyAlert() builds the Alert cot xml event & sends it both externally & internally
+    //         b) sendEmergencyCancel() builds the Cancel Alert cot xml event & sends it both externally & internally
     // =========================================================================================
-    /*public void sendEmergencyAlert(String envelopeJson) {
+    private void handleEmergencyCot(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendEmergencyAlert: missing payload");
+                Log.w(TAG, "handleEmergencyCot: missing payload");
                 return;
             }
 
-            // p.uid preferred (your emergency payload), else msg_id
-            String uid = optString(p, "uid",
-                    optString(env, "msg_id", UUID.randomUUID().toString()));
+            String state = optString(p, "state", "");
 
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
+            boolean isAlert  = "ALERT".equalsIgnoreCase(state);
+            boolean isCancel = "CANCEL".equalsIgnoreCase(state);
 
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
-            String catg     = optString(p, "catg", "Manual SOS Alert");
-            String desc     = optString(p, "desc", "SOS Alert");
-
-            int bat = optInt(p, "bat", -1);
-
-            // Point: use EUD location for now
-            EudFix fix = getEudFix();
-
-            StringBuilder detail = new StringBuilder();
-            detail.append("<detail>");
-            detail.append("<emergency type='").append(escapeXml(desc)).append("'>")
-                    .append(escapeXml(callsign)).append("</emergency>");
-            detail.append("<contact callsign='")
-                    .append(escapeXml(callsign)).append("&#10;").append(escapeXml(catg))
-                    .append("'/>");
-            if (bat >= 0) {
-                detail.append("<status battery='").append(bat).append("'/>");
+            if (isAlert) {
+                sendEmergencyAlert(envelopeJson);
             }
-            detail.append("<usericon iconsetpath='911 Alert'/>");
-            detail.append("<color argb='-1'/>");
-            detail.append("</detail>");
-
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0' uid='" + escapeXml(uid) + "' type='b-a-o' "
-                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale)
-                            + "' how='h-e' access='Undefined'>"
-                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
-                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
-                            + detail
-                            + "</event>";
-
-            Log.d(TAG, "Emergency ALERT XML:\n" + xml);
-
-            dispatchExternal("EMERGENCY_ALERT", xml);
+            if (isCancel) {
+                sendEmergencyCancel(envelopeJson);
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
         }
-    }*/
+    }
 
     public void sendEmergencyAlert(String envelopeJson) {
         try {
@@ -470,7 +329,14 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign = optString(p, "callsign", "WEAROS-TEST");
+            String callsign = "";
+            if (watchAsSource) {
+                // use watch callsign, if not, fallback to this EUD callsign.
+                callsign = optString(p, "cs", pluginCallsign);
+            } else {
+                callsign = pluginCallsign;
+            }
+
             String catg     = optString(p, "catg", "Manual SOS Alert");
             String desc     = optString(p, "desc", "SOS Alert");
 
@@ -517,32 +383,13 @@ public class BleCotBridge {
                             + detail
                             + "</event>";
 
-            Log.d(TAG, "Emergency ALERT XML:\n" + xml);
+            dispatchCot("Emergency ALERT", xml);
 
-            // Parse and dispatch
-            com.atakmap.coremap.cot.event.CotEvent evt = com.atakmap.coremap.cot.event.CotEvent.parse(xml);
-
-            // 1) Inject into internal pipeline so Emergency UI/marker are created
-            internalCotDispatcher.dispatch(evt);
-
-            // 2) Also send externally (network)
-            externalCotDispatcher.dispatch(evt);
-
-            // Optional fallback internal injection via import intent:
-            // android.content.Intent i = new android.content.Intent(
-            //         com.atakmap.android.importexport.ImportExportMapComponent.IMPORT_COT);
-            // i.putExtra("event", evt);
-            // com.atakmap.android.ipc.AtakBroadcast.getInstance().sendBroadcast(i);
-
-            Log.d(TAG, "EMERGENCY ALERT SENT");
         } catch (Exception e) {
             Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
         }
     }
 
-    // =========================================================================================
-    // 3) EMERGENCY CANCEL (JSON envelope input)
-    // =========================================================================================
     public void sendEmergencyCancel(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
@@ -552,8 +399,7 @@ public class BleCotBridge {
                 return;
             }
 
-            String uid = optString(p, "uid",
-                    optString(env, "msg_id", UUID.randomUUID().toString()));
+            String uid = optString(p, "uid", optString(env, "msg_id", UUID.randomUUID().toString()));
 
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
@@ -574,10 +420,7 @@ public class BleCotBridge {
                             + "</detail>"
                             + "</event>";
 
-            Log.d(TAG, "Emergency CANCEL XML:\n" + xml);
-
-//            dispatchExternal("EMERGENCY_CANCEL", xml);
-            dispatchCot("EMERGENCY_CANCEL", xml, true, true);
+            dispatchCot("Emergency CANCEL", xml);
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendEmergencyCancel(json)", e);
@@ -596,190 +439,6 @@ public class BleCotBridge {
         com.atakmap.android.chat.ChatManagerMapComponent.getInstance()
                 .sendMessage(text, convos);
     }
-
-
-    // =========================================================================================
-// 4) CHAT (GeoChat) (JSON envelope input)
-// =========================================================================================
-    /*public void sendChat(String envelopeJson) {
-        try {
-            JSONObject env = new JSONObject(envelopeJson);
-            JSONObject p = env.optJSONObject("payload");
-            if (p == null) {
-                Log.w(TAG, "sendChat: missing payload");
-                return;
-            }
-
-            // Payload fields from your Kotlin builder
-            String msgUid    = optString(p, "uid", optString(env, "msg_id", UUID.randomUUID().toString()));
-            String roomUid   = optString(p, "roomUid", "WEARTAK_ROOM");
-            String roomTitle = optString(p, "roomTitle", roomUid);
-            String msg       = optString(p, "msg", "");
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
-
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 600000)); // +10 min
-
-            int bat = optInt(p, "bat", -1);
-            int hr  = optInt(p, "hr", -1);
-
-            // CoT uid choice: stable per-room, or per-message.
-            // For v1, simplest is: use payload.uid (message id) to avoid collisions.
-            String uid = msgUid;
-
-            // GeoChat point is commonly 0/0; we can also put EUD location.
-            // To be safe for ATAK, we'll use EUD location.
-            EudFix fix = getEudFix();
-
-            // Conservative GeoChat detail format
-            // NOTE: Different ATAK builds sometimes expect slightly different attributes;
-            // this is a solid starting point that usually shows up in Chat.
-            StringBuilder detail = new StringBuilder();
-            detail.append("<detail>");
-
-            // Optional status info from watch
-            if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
-            if (hr >= 0)  detail.append("<sensor hr='").append(hr).append("'/>");
-
-            // The chat block
-            detail.append("<__chat")
-                    .append(" id='").append(escapeXml(roomUid)).append("'")
-                    .append(" chatroom='").append(escapeXml(roomTitle)).append("'")
-                    .append(" senderCallsign='").append(escapeXml(callsign)).append("'")
-                    .append(" senderUid='").append(escapeXml(callsign)).append("'")
-                    .append(" groupOwner='false'")
-                    .append(">");
-            detail.append(escapeXml(msg));
-            detail.append("</__chat>");
-
-            detail.append("</detail>");
-
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0'"
-                            + " uid='" + escapeXml(uid) + "'"
-                            + " type='b-t-f'"
-                            + " time='" + escapeXml(time) + "'"
-                            + " start='" + escapeXml(time) + "'"
-                            + " stale='" + escapeXml(stale) + "'"
-                            + " how='h-g-i-g-o'>"
-                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
-                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
-                            + detail
-                            + "</event>";
-
-            Log.d(TAG, "GeoChat XML:\n" + xml);
-
-            //dispatchExternal("CHAT", xml);
-
-            CotEvent chatEvent = CotEvent.parse(xml);
-            ChatMessageParser chatMessageParser = new ChatMessageParser(mapView);
-            chatMessageParser.parseCotEvent(chatEvent);
-
-            externalCotDispatcher.dispatchToBroadcast(chatEvent);
-
-            Log.d(TAG, "CHAT SENT");
-
-            sendChatViaAPI(msg);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error in sendChat(json)", e);
-        }
-    }*/
-
-
-    /*public void sendChat(String envelopeJson) {
-        try {
-            JSONObject env = new JSONObject(envelopeJson);
-            JSONObject p = env.optJSONObject("payload");
-            if (p == null) { Log.w(TAG, "sendChat: missing payload"); return; }
-
-            String msgUid    = optString(p, "uid", optString(env, "msg_id", UUID.randomUUID().toString()));
-            String roomUid   = optString(p, "roomUid", "WEARTAK_ROOM");
-            String roomTitle = optString(p, "roomTitle", roomUid);
-            String msg       = optString(p, "msg", "");
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
-
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 600000));
-
-            int bat = optInt(p, "bat", -1);
-            int hr  = optInt(p, "hr", -1);
-
-            // Self info
-            String selfUid = mapView.getSelfMarker().getUID();
-            String deviceType = mapView.getMapData().getMetaString("deviceType", "a-f");
-
-            // Event UID must follow GeoChat pattern so Chat can parse sender/room
-            String eventUid = "GeoChat." + selfUid + "." + roomUid + "." + msgUid;
-
-            EudFix fix = getEudFix();
-
-            StringBuilder detail = new StringBuilder();
-            detail.append("<detail>");
-
-            if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
-            if (hr >= 0)  detail.append("<sensor hr='").append(hr).append("'/>");
-
-            // __chat block with messageId and chatgrp
-            detail.append("<__chat")
-                    .append(" id='").append(escapeXml(roomUid)).append("'")
-                    .append(" messageId='").append(escapeXml(msgUid)).append("'")
-                    .append(" chatroom='").append(escapeXml(roomTitle)).append("'")
-                    .append(" senderCallsign='").append(escapeXml(callsign)).append("'")
-                    .append(" groupOwner='false'>");
-
-            // Chat group membership (at least self)
-            detail.append("<chatgrp id='").append(escapeXml(roomUid)).append("'")
-                    .append(" uid0='").append(escapeXml(selfUid)).append("'/>");
-
-            detail.append("</__chat>");
-
-            // Link back to sender
-            detail.append("<link uid='").append(escapeXml(selfUid)).append("'")
-                    .append(" type='").append(escapeXml(deviceType)).append("'")
-                    .append(" relation='p-p'/>");
-
-            // Message content goes in <remarks>
-            detail.append("<remarks source='BAO.F.ATAK.")
-                    .append(escapeXml(selfUid))
-                    .append("' time='").append(escapeXml(time)).append("'>")
-                    .append(escapeXml(msg))
-                    .append("</remarks>");
-
-            detail.append("</detail>");
-
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0'"
-                            + " uid='" + escapeXml(eventUid) + "'"
-                            + " type='b-t-f'"
-                            + " time='" + escapeXml(time) + "'"
-                            + " start='" + escapeXml(time) + "'"
-                            + " stale='" + escapeXml(stale) + "'"
-                            + " how='h-g-i-g-o'>"
-                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
-                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
-                            + detail
-                            + "</event>";
-
-            Log.d(TAG, "GeoChat XML:\n" + xml);
-
-            CotEvent chatEvent = CotEvent.parse(xml);
-
-            // Optional: verify Chat can parse before send (useful during dev)
-            ChatMessageParser parser = new ChatMessageParser(mapView);
-            parser.parseCotEvent(chatEvent);
-
-            // Broadcast on GeoChat multicast
-            externalCotDispatcher.dispatchToBroadcast(chatEvent);
-
-            Log.d(TAG, "CHAT SENT");
-        } catch (Exception e) {
-            Log.e(TAG, "Error in sendChat(json)", e);
-        }
-    }*/
-
 
     public void sendChat(String envelopeJson) {
         try {
@@ -967,9 +626,8 @@ public class BleCotBridge {
                     break;
 
                 case "emergency":
-                    // Emergency payload includes state ALERT/CANCEL; your existing method
-                    // should already choose b-a-o vs b-a-o-can based on payload.state.
-                    sendEmergencyAlert(envelopeJson);
+                    // Emergency payload includes ALERT/CANCEL, handle each case.;
+                    handleEmergencyCot(envelopeJson);
                     break;
 
                 case "chat":
@@ -977,39 +635,14 @@ public class BleCotBridge {
                     sendChat(envelopeJson);
                     break;
 
-                case "watch_info":
-                    handleWatchInfo(envelopeJson);
-                    break;
-
                 default:
-//                    Log.w(TAG, "handleJsonFromWearTak: unknown msg_type=" + msgType);
+                    // Anything else, do nothing
                     break;
             }
 
         } catch (Exception e) {
             Log.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
         }
-    }
-
-    private void handleWatchInfo(String json) {
-        Log.i(TAG, "Watch Info Received: " + json);
-    }
-
-    // =========================================================================================
-    // DISPATCH (external)
-    // =========================================================================================
-    private void dispatchExternal(String label, String xml) {
-        if (externalCotDispatcher == null) {
-            Log.w(TAG, "dispatchExternal(" + label + "): externalCotDispatcher is null");
-            return;
-        }
-
-        Log.d(TAG, "dispatchExternal(" + label + "): dispatching CotEvent.parse(xml)");
-        Log.d(TAG, "COT PAYLOAD:\n" + xml);
-
-        externalCotDispatcher.dispatch(CotEvent.parse(xml));
-
-        Log.d(TAG, "dispatchExternal(" + label + "): SENT");
     }
 
     // =========================================================================================
@@ -1067,7 +700,7 @@ public class BleCotBridge {
     }
 
     // =========================================================================================
-    // JSON HELPERS (lenient)
+    // HELPER FUNCTIONS
     // =========================================================================================
     private static String optString(JSONObject o, String k, String def) {
         String v = o.optString(k, null);
@@ -1084,9 +717,6 @@ public class BleCotBridge {
         return o.optDouble(k, def);
     }
 
-    // =========================================================================================
-    // UTIL HELPERS
-    // =========================================================================================
     private static String trimDouble(double d) {
         return ((int) d) == d ? Integer.toString((int) d) : Double.toString(d);
     }
@@ -1112,5 +742,51 @@ public class BleCotBridge {
         }
     }
 
+    /**
+     * Creates callsign like: "WEAROS-1075_161710Z" derived from ISO8601 time.
+     * Expects time like "2025-12-19T16:17:10.132Z"
+     */
+    private String buildMarkerCallsign(String baseCallsign, String isoTime) {
+        // Minimal, safe parsing: HHmmss from positions 11..19 if format matches
+        try {
+            if (isoTime != null && isoTime.length() >= 19 && isoTime.charAt(10) == 'T') {
+                String hh = isoTime.substring(11, 13);
+                String mm = isoTime.substring(14, 16);
+                String ss = isoTime.substring(17, 19);
+                return baseCallsign + "_" + hh + mm + ss + "Z";
+            }
+        } catch (Exception ignored) {}
+        return baseCallsign;
+    }
+
+    private String formatDouble(double v) {
+        // Avoid Locale issues; keep full-ish precision like your expected example
+        // (If you want fixed precision per field, tell me and I’ll match exactly.)
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "0";
+        return String.format(Locale.US, "%.7f", v).replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
+    /** Returns Integer if key exists and is parseable as int, else null. */
+    private Integer optIntNullable(JSONObject o, String key) {
+        if (o == null || key == null) return null;
+        if (!o.has(key) || o.isNull(key)) return null;
+
+        try {
+            Object v = o.get(key);
+            if (v instanceof Number) return ((Number) v).intValue();
+            if (v instanceof String) {
+                String s = ((String) v).trim();
+                if (s.isEmpty()) return null;
+                return (int) Double.parseDouble(s); // supports "87" or "87.0"
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static String iconFromType(String type) {
+        if (type == null || type.isEmpty()) return null;
+        return COT_MAPPING_2525C + "/" + type.replace("-", "/");
+    }
 
 }

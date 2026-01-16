@@ -18,7 +18,7 @@
         android:ellipsize="end"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/actionButton" />
+        app:layout_constraintEnd_toStartOf="@id/actionRow" />
 
     <TextView
         android:id="@+id/deviceMac"
@@ -31,7 +31,7 @@
         android:ellipsize="end"
         app:layout_constraintTop_toBottomOf="@id/deviceName"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/actionButton" />
+        app:layout_constraintEnd_toStartOf="@id/actionRow" />
 
     <TextView
         android:id="@+id/rssiBadge"
@@ -69,14 +69,14 @@
 
         <Button
             android:id="@+id/disconnectButton"
-            android:layout_width="80dp"
+            android:layout_width="110dp"
             android:layout_height="40dp"
             android:text="Disconnect"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/actionButton"
-            android:layout_width="80dp"
+            android:layout_width="110dp"
             android:layout_height="40dp"
             android:text="Connect" />
     </LinearLayout>

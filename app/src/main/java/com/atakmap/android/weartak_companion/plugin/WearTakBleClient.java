@@ -20,6 +20,7 @@ import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
@@ -64,6 +65,7 @@ public class WearTakBleClient {
     private BluetoothGatt bluetoothGatt;
     private BluetoothGattCharacteristic txNotifyChar; // A11B
     private BluetoothGattCharacteristic rxWriteChar;  // A11C
+    private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -120,6 +122,16 @@ public class WearTakBleClient {
     public WearTakBleClient(Context context, StatusListener statusListener) {
         this.baseContext = context;
         this.statusListener = statusListener;
+    }
+
+    private void savePreferredAddress(String addr) {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit().putString(KEY_PREFERRED_ADDRESS, addr).apply();
+    }
+
+    public String getPreferredAddress() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return prefs.getString(KEY_PREFERRED_ADDRESS, null);
     }
 
     public static class DiscoveredDevice {
@@ -237,14 +249,17 @@ public class WearTakBleClient {
                 boolean hasService = safeHasServiceUuid(result, COMPANION_SERVICE_UUID);
                 boolean nameLooksRight = startsWithWT(name) || startsWithWT(advName);
 
-                if (!hasService && !nameLooksRight) return;
+                if (!hasService) return;
 
                 String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
-                DiscoveredDevice dd = new DiscoveredDevice(displayName, addr, rssi);
+                String strippedName = displayName.split("-")[1];
+                DiscoveredDevice dd = new DiscoveredDevice(strippedName, addr, rssi);
 
                 discovered.put(addr, dd);
 
                 if (listener != null) listener.onDeviceFound(dd);
+                Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
+                        + " displayName=" + displayName + " hasService=" + hasService + " rssi=" + rssi);
             }
 
             @Override

@@ -55,153 +55,209 @@
 
     </LinearLayout>
 
-    <!-- SETTINGS SCREEN -->
-    <LinearLayout
+    <!-- ================= SETTINGS SCREEN (SCROLLABLE) ================= -->
+    <ScrollView
         android:id="@+id/settingsScreenRoot"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:visibility="gone">
+        android:visibility="gone"
+        android:fillViewport="true">
 
+        <!-- ScrollView MUST have exactly one child -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical">
 
-            <Button
-                android:id="@+id/settingsBackButton"
-                android:layout_width="wrap_content"
+            <!-- Header -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Back" />
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/settingsBackButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Back" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Device Settings"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:gravity="center_vertical"
+                    android:paddingLeft="10dp" />
+            </LinearLayout>
 
             <TextView
-                android:layout_width="0dp"
+                android:id="@+id/settingsStatus"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Device Settings"
+                android:paddingTop="8dp"
+                android:text="" />
+
+            <!-- Action buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/refreshSettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Refresh from Watch" />
+
+                <Button
+                    android:id="@+id/sendSettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Send to Watch" />
+            </LinearLayout>
+
+            <!-- Device -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Device"
                 android:textStyle="bold"
-                android:textSize="18sp"
+                android:paddingTop="10dp"
+                android:paddingBottom="4dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:paddingLeft="10dp" />
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:layout_width="110dp"
+                    android:layout_height="wrap_content"
+                    android:text="Watch Callsign"
+                    android:alpha="0.85" />
+
+                <EditText
+                    android:id="@+id/watchCallsign"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="WEAROS-XYZ"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="4dp">
+
+                <TextView
+                    android:layout_width="110dp"
+                    android:layout_height="wrap_content"
+                    android:text="Report interval"
+                    android:alpha="0.85" />
+
+                <EditText
+                    android:id="@+id/reportInterval"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="3"
+                    android:inputType="number"
+                    android:singleLine="true" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="sec"
+                    android:layout_marginStart="8dp"
+                    android:alpha="0.85" />
+            </LinearLayout>
+
+            <!-- TAK Servers -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TAK Servers"
+                android:textStyle="bold"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/takServerList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:nestedScrollingEnabled="false" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="6dp">
+
+                <ImageButton
+                    android:id="@+id/addServerButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:contentDescription="Add Server"
+                    android:src="@drawable/ic_plus_circle"
+                    android:background="@android:color/transparent"
+                    android:padding="8dp" />
+
+            </LinearLayout>
+            <!-- Selected Server -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Selected Server"
+                android:textStyle="bold"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <EditText
+                android:id="@+id/takName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Name" />
+
+            <EditText
+                android:id="@+id/takAddress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Address (IP/DNS)" />
+
+            <EditText
+                android:id="@+id/takPort"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Port"
+                android:inputType="number" />
+
+            <EditText
+                android:id="@+id/takUsername"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Username (if not P12)"
+                android:inputType="text" />
+
+            <EditText
+                android:id="@+id/takPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Password (if not P12)"
+                android:inputType="textPassword" />
+
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/settingsDeviceSubtitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="—"
-            android:paddingBottom="8dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/refreshSettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Refresh from Watch" />
-
-            <Button
-                android:id="@+id/sendSettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Send to Watch" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="TAK Servers"
-            android:textStyle="bold"
-            android:paddingTop="8dp"
-            android:paddingBottom="4dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="end">
-
-            <ImageButton
-                android:id="@+id/addServerButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="Add Server"
-                android:src="@drawable/ic_plus_circle"
-                android:background="@android:color/transparent" />
-
-            <Button
-                android:id="@+id/deleteServerButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Delete" />
-        </LinearLayout>
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/takServerList"
-            android:layout_width="match_parent"
-            android:layout_height="140dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Selected Server"
-            android:textStyle="bold"
-            android:paddingTop="8dp"
-            android:paddingBottom="4dp" />
-
-        <EditText
-            android:id="@+id/takName"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Name" />
-
-        <EditText
-            android:id="@+id/takAddress"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Address (IP/DNS)" />
-
-        <EditText
-            android:id="@+id/takPort"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="number"
-            android:hint="Port" />
-
-        <EditText
-            android:id="@+id/takUsername"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Username (if not P12)"
-            android:inputType="text" />
-
-        <EditText
-            android:id="@+id/takPassword"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Password (if not P12)"
-            android:inputType="textPassword" />
-
-        <EditText
-            android:id="@+id/reportInterval"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Report Interval (secs)"
-            android:inputType="number"
-            android:paddingTop="6dp" />
-
-        <TextView
-            android:id="@+id/settingsStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text=""
-            android:paddingTop="8dp" />
-
-    </LinearLayout>
+    </ScrollView>
 
 </FrameLayout>
