@@ -181,19 +181,25 @@ public class BleCotBridge {
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
 
-            // Point fields (marker payload has these)
-            double lat = optDouble(p, "lat", 0.0);
-            double lon = optDouble(p, "lon", 0.0);
-            double hae = optDouble(p, "hae", 0.0);
-            double ce  = optDouble(p, "ce", 10.0);
-            double le  = optDouble(p, "le", 10.0);
 
-            String callsign = "";
+            // Point fields (marker payload has these)
+            EudFix eudFix = getEudFix();
+
+            double lat = eudFix.lat;
+            double lon = eudFix.lon;
+            double hae = eudFix.hae;
+            double ce  = eudFix.ce;
+            double le  = eudFix.le;
+
+            String callsign = pluginCallsign;
             if (watchAsSource) {
-                // use watch callsign, if not, fallback to this EUD callsign.
+                // use watch callsign & location fix, fallback to this device on null
                 callsign = optString(p, "cs", pluginCallsign);
-            } else {
-                callsign = pluginCallsign;
+                lat = optDouble(p, "lat", lat);
+                lon = optDouble(p, "lon", lon);
+                hae = optDouble(p, "hae", hae);
+                ce  = optDouble(p, "ce", ce);
+                le  = optDouble(p, "le", le);
             }
 
             Integer batteryPct = optIntNullable(p, "bat");

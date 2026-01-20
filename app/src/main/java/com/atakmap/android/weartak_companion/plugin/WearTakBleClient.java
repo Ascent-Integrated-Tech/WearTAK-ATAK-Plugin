@@ -247,7 +247,6 @@ public class WearTakBleClient {
                 String advName = safeGetAdvName(result);
 
                 boolean hasService = safeHasServiceUuid(result, COMPANION_SERVICE_UUID);
-                boolean nameLooksRight = startsWithWT(name) || startsWithWT(advName);
 
                 if (!hasService) return;
 
@@ -686,6 +685,8 @@ public class WearTakBleClient {
             if (statusListener != null) statusListener.onConnectionStatusChanged(connected);
         }
     }
+
+    private void storeConnectedDeviceName() {}
 
     private void error(String msg) {
         logW("ERROR: " + msg);

@@ -100,6 +100,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // Strings (keep literal for now; you can move to strings.xml later)
     private static final String SCAN_TEXT_DEFAULT = "Scan for WearTAK Devices";
     private static final String SCAN_TEXT_REFRESH = "Scan again to refresh devices";
+    private static final String PREFS_NAME = "weartak_companion_prefs";
+    private static final String KEY_PREF_ADDR = "preferred_device_address";
+    private static final String KEY_PREF_NAME = "preferred_device_name";
+    private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
 
     // ------------------ Connected card helpers ------------------
 
@@ -230,6 +234,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
 
                     if (connected) {
+                        // Persist preferred device for future sessions
+                        String addr = currentConnectedAddress;
+                        String nm = (selectedDevice != null) ? selectedDevice.name : null;
+                        if (addr != null && !addr.trim().isEmpty()) {
+                            savePreferredDevice(addr, nm);
+                        }
                         // Show the card if we have a selected device (common path).
                         if (selectedDevice != null) {
                             currentConnectedAddress = selectedDevice.address;
@@ -538,7 +548,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (aConn != bConn) return aConn ? -1 : 1;
 
             // 2) preferred next
-            String pref = getPreferredAddress(); // from prefs
+            String pref = loadPreferredAddress(); // from prefs
             boolean aPref = pref != null && pref.equals(a.address);
             boolean bPref = pref != null && pref.equals(b.address);
             if (aPref != bPref) return aPref ? -1 : 1;
@@ -555,11 +565,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         });
 
         deviceAdapter.setDevices(copy);
-    }
-
-    private String getPreferredAddress() {
-        String pref = "";
-        return pref;
     }
 
     private void resetDeviceScreenOnOpen() {
@@ -923,6 +928,36 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             currentServerList = parseTakServerList(payload);
             mainHandler.post(() -> applyServersToUi(currentServerList));
         }
+    }
+
+    private void savePreferredDevice(String address, String nameOrNull) {
+        if (pluginContext == null) return;
+        if (address == null || address.trim().isEmpty()) return;
+
+        pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_PREF_ADDR, address.trim())
+                .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
+                .putLong(KEY_PREF_SET_AT, System.currentTimeMillis())
+                .apply();
+    }
+
+    private String loadPreferredAddress() {
+        if (pluginContext == null) return null;
+        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_PREF_ADDR, null);
+        if (v == null) return null;
+        v = v.trim();
+        return v.isEmpty() ? null : v;
+    }
+
+    private String loadPreferredName() {
+        if (pluginContext == null) return null;
+        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_PREF_NAME, null);
+        if (v == null) return null;
+        v = v.trim();
+        return v.isEmpty() ? null : v;
     }
 
     @Override
