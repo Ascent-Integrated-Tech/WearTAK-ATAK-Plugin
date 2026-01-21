@@ -180,7 +180,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
-
+            String remarks = optString(p, "remarks", "");
 
             // Point fields (marker payload has these)
             EudFix eudFix = getEudFix();
@@ -259,7 +259,9 @@ public class BleCotBridge {
             // <remarks>HeartRate: ...; Battery Level: ...</remarks>
             String hrText = (hrBpm == null ? "null" : String.valueOf(hrBpm));
             String batText = (batteryPct == null ? "null" : String.valueOf(batteryPct));
-            String remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
+            if (null == remarks || remarks.isEmpty()) {
+                remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
+            }
             detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>");
 
             // <contact callsign="WEAROS-1075_161710Z"/>
