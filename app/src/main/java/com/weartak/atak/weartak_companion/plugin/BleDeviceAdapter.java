@@ -1,4 +1,4 @@
-package com.atakmap.android.weartak_companion.plugin;
+package com.weartak.atak.weartak_companion.plugin;
 
 import android.view.LayoutInflater;
 import android.view.View;

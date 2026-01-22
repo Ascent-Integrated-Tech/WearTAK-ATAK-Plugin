@@ -3,5 +3,5 @@
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
     <!-- description -->
-    <string name="app_desc">This plugin bridges TAK data from a nearby smartwatch running the WearTAK app (via BLE) and forwards this data to connected TAK servers</string>
+    <string name="app_desc">This plugin functions as a BLE-based CoT forwarder and reconstructor between WearTAK and ATAK EUDs, as well as allowing WearTAK settings to be configured via ATAK EUD.</string>
 </resources>

@@ -1,5 +1,5 @@
 
-package com.atakmap.android.test;
+package com.weartak.atak.test;
 
 import static org.junit.Assert.*;
 

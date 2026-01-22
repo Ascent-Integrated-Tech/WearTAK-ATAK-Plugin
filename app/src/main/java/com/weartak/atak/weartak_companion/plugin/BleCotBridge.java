@@ -1,4 +1,4 @@
-package com.atakmap.android.weartak_companion.plugin;
+package com.weartak.atak.weartak_companion.plugin;
 
 import static com.atakmap.android.maps.MapView.getMapView;
 import static com.atakmap.android.user.icon.Icon2525cPallet.COT_MAPPING_2525C;
