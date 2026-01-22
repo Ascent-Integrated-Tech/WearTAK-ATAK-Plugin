@@ -3,5 +3,5 @@
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
     <!-- description -->
-    <string name="app_desc">This plugin demonstrate bare bones plugin UI, and may be used to start a new plugin project</string>
+    <string name="app_desc">This plugin bridges TAK data from a nearby smartwatch running the WearTAK app (via BLE) and forwards this data to connected TAK servers</string>
 </resources>
