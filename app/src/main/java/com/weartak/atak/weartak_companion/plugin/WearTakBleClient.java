@@ -251,11 +251,15 @@ public class WearTakBleClient {
                 if (!hasService) return;
 
                 String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
-                String strippedName = displayName;
+                StringBuilder strippedName = new StringBuilder(displayName);
                 assert displayName != null;
                 String[] parts = displayName.split("-");
-                if (parts.length >= 2) strippedName = parts[1];
-                DiscoveredDevice dd = new DiscoveredDevice(strippedName, addr, rssi);
+                if (parts.length >= 2) {
+                    strippedName = new StringBuilder(parts[1]);
+                    for (int i = 2; i < parts.length; i++) strippedName.append("-").append(parts[i]);
+                }
+                Log.d(TAG, "SCAN: strippedName=(" + strippedName.toString() + "); displayName=(" + displayName + "); name=(" + name + "); advName=(" + advName + "); strippedName=(" + strippedName +")");
+                DiscoveredDevice dd = new DiscoveredDevice(strippedName.toString(), addr, rssi);
 
                 discovered.put(addr, dd);
 
