@@ -180,7 +180,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
-            String remarks = optString(p, "remarks", "");
+            String title = optString(p, "title", "");
 
             // Point fields (marker payload has these)
             EudFix eudFix = getEudFix();
@@ -259,14 +259,14 @@ public class BleCotBridge {
             // <remarks>HeartRate: ...; Battery Level: ...</remarks>
             String hrText = (hrBpm == null ? "null" : String.valueOf(hrBpm));
             String batText = (batteryPct == null ? "null" : String.valueOf(batteryPct));
-            if (null == remarks || remarks.isEmpty()) {
-                remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
-            }
+            String remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
             detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>");
-
+            if (null == title || title.isEmpty()) {
+                title = escapeXml(buildMarkerCallsign(callsign, time));
+            }
             // <contact callsign="WEAROS-1075_161710Z"/>
             detail.append("<contact callsign=\"")
-                    .append(escapeXml(buildMarkerCallsign(callsign, time)))
+                    .append(title)
                     .append("\"/>");
 
             // Build final XML
