@@ -6,11 +6,13 @@ import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.TextView;
 
@@ -20,11 +22,15 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atak.plugins.impl.PluginLayoutInflater;
 import com.atak.plugins.impl.IToolbarItem;
+import com.atakmap.android.gui.ImportFileBrowserDialog;
 import com.atakmap.android.maps.MapView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -79,6 +85,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private EditText takPortET;
     private EditText takUsernameET;
     private EditText takPasswordET;
+    private CheckBox takUseP12CB;
+    private EditText takP12PasswordET;
+    private TextView takP12StatusTV;
+    private Button chooseP12Button;
+    private Button clearP12Button;
     private EditText reportIntervalET;
 
     private Button sendSettingsButton;
@@ -105,6 +116,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private static final String KEY_PREF_ADDR = "preferred_device_address";
     private static final String KEY_PREF_NAME = "preferred_device_name";
     private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
+    private static final String NO_P12_SELECTED = "No certificate selected.";
+    private static final String WATCH_P12_SELECTED = "Certificate loaded from watch sync.";
 
     // ------------------ Connected card helpers ------------------
 
@@ -523,9 +536,24 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             takNameET = paneView.findViewById(R.id.takName);
             takAddressET = paneView.findViewById(R.id.takAddress);
             takPortET = paneView.findViewById(R.id.takPort);
+            takUseP12CB = paneView.findViewById(R.id.takUseP12);
             takUsernameET = paneView.findViewById(R.id.takUsername);
             takPasswordET = paneView.findViewById(R.id.takPassword);
+            takP12PasswordET = paneView.findViewById(R.id.takP12Password);
+            takP12StatusTV = paneView.findViewById(R.id.takP12Status);
+            chooseP12Button = paneView.findViewById(R.id.chooseP12Button);
+            clearP12Button = paneView.findViewById(R.id.clearP12Button);
             reportIntervalET = paneView.findViewById(R.id.reportInterval);
+
+            if (takUseP12CB != null) {
+                takUseP12CB.setOnClickListener(v -> onAuthModeCheckboxClicked());
+            }
+            if (chooseP12Button != null) {
+                chooseP12Button.setOnClickListener(v -> openP12Browser());
+            }
+            if (clearP12Button != null) {
+                clearP12Button.setOnClickListener(v -> clearSelectedServerP12());
+            }
 
             refreshSettingsButton = paneView.findViewById(R.id.refreshSettingsButton);
             refreshSettingsButton.setOnClickListener(v -> requestSettingsFromWatch("refreshButton"));
@@ -702,6 +730,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         TakServerItem chosen = safeGet(servers, sel);
         if (chosen != null) populateFieldsFromItem(chosen);
+        else clearServerEditor();
     }
 
     private void populateFieldsFromItem(TakServerItem item) {
@@ -710,14 +739,19 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         setText(takNameET, item.name);
         setText(takAddressET, item.address);
         setText(takPortET, String.valueOf(item.port));
+        if (takUseP12CB != null) takUseP12CB.setChecked(item.isP12Cert);
 
         if (!item.isP12Cert) {
             setText(takUsernameET, item.username);
             setText(takPasswordET, item.password);
+            setText(takP12PasswordET, "");
         } else {
             setText(takUsernameET, "");
             setText(takPasswordET, "");
+            setText(takP12PasswordET, item.p12CertPassword);
         }
+
+        refreshSelectedServerAuthUi(item);
     }
 
     private void commitFieldsToSelectedItem() {
@@ -733,6 +767,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (!item.isP12Cert) {
             item.username = getText(takUsernameET);
             item.password = getText(takPasswordET);
+        } else {
+            item.username = "";
+            item.password = "";
+            item.p12CertPassword = getText(takP12PasswordET);
         }
     }
 
@@ -748,6 +786,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         JSONArray list = new JSONArray();
 
         try {
+            for (int i = 0; i < currentServerList.size(); i++) {
+                TakServerItem t = currentServerList.get(i);
+                if (t.isP12Cert && (t.p12Cert == null || t.p12Cert.trim().isEmpty())) {
+                    if (settingsStatusTV != null) {
+                        String name = (t.name == null || t.name.trim().isEmpty()) ? ("Server " + (i + 1)) : t.name;
+                        settingsStatusTV.setText(name + " is set to P12 auth but has no certificate selected.");
+                    }
+                    return;
+                }
+            }
+
             for (TakServerItem t : currentServerList) {
                 list.put(t.toJson());
             }
@@ -790,6 +839,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         item.password = "";
         item.p12Cert = "";
         item.p12CertPassword = "";
+        item.p12DisplayName = null;
 
         currentServerList.add(item);
 
@@ -827,8 +877,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             setText(takNameET, "");
             setText(takAddressET, "");
             setText(takPortET, "");
+            if (takUseP12CB != null) takUseP12CB.setChecked(false);
             setText(takUsernameET, "");
             setText(takPasswordET, "");
+            setText(takP12PasswordET, "");
+            updateP12Status(null);
+            refreshSelectedServerAuthUi(null);
 
             if (settingsStatusTV != null) settingsStatusTV.setText("Deleted server (not sent yet).");
             return;
@@ -911,6 +965,162 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (list == null) return null;
         if (idx < 0 || idx >= list.size()) return null;
         return list.get(idx);
+    }
+
+    private void clearServerEditor() {
+        setText(takNameET, "");
+        setText(takAddressET, "");
+        setText(takPortET, "");
+        if (takUseP12CB != null) takUseP12CB.setChecked(false);
+        setText(takUsernameET, "");
+        setText(takPasswordET, "");
+        setText(takP12PasswordET, "");
+        updateP12Status(null);
+        refreshSelectedServerAuthUi(null);
+    }
+
+    private void onAuthModeCheckboxClicked() {
+        TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+        if (item == null || takUseP12CB == null) {
+            if (takUseP12CB != null) takUseP12CB.setChecked(false);
+            return;
+        }
+
+        boolean useP12 = takUseP12CB.isChecked();
+        item.isP12Cert = useP12;
+        if (useP12) {
+            item.username = "";
+            item.password = "";
+        } else {
+            item.p12Cert = "";
+            item.p12CertPassword = "";
+            item.p12DisplayName = null;
+            setText(takP12PasswordET, "");
+        }
+
+        refreshSelectedServerAuthUi(item);
+        if (takServerAdapter != null) takServerAdapter.notifyDataSetChanged();
+    }
+
+    private void refreshSelectedServerAuthUi(TakServerItem item) {
+        boolean useP12 = item != null && item.isP12Cert;
+
+        setVisible(takUsernameET, !useP12);
+        setVisible(takPasswordET, !useP12);
+        setVisible(takP12StatusTV, useP12);
+        setVisible(takP12PasswordET, useP12);
+        View p12Buttons = paneView == null ? null : paneView.findViewById(R.id.takP12Buttons);
+        setVisible(p12Buttons, useP12);
+
+        if (chooseP12Button != null) {
+            boolean hasP12 = item != null && item.p12Cert != null && !item.p12Cert.isEmpty();
+            chooseP12Button.setText(hasP12 ? "Replace P12 File" : "Choose P12 File");
+        }
+        updateP12Status(item);
+    }
+
+    private void updateP12Status(TakServerItem item) {
+        if (takP12StatusTV == null) return;
+        if (item == null || !item.isP12Cert) {
+            takP12StatusTV.setText(NO_P12_SELECTED);
+            return;
+        }
+
+        if (item.p12DisplayName != null && !item.p12DisplayName.trim().isEmpty()) {
+            takP12StatusTV.setText("Selected: " + item.p12DisplayName);
+            return;
+        }
+
+        if (item.p12Cert != null && !item.p12Cert.isEmpty()) {
+            takP12StatusTV.setText(WATCH_P12_SELECTED);
+            return;
+        }
+
+        takP12StatusTV.setText(NO_P12_SELECTED);
+    }
+
+    private void openP12Browser() {
+        TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+        if (item == null) {
+            if (settingsStatusTV != null) settingsStatusTV.setText("Select a server before choosing a P12 file.");
+            return;
+        }
+
+        ImportFileBrowserDialog browser = new ImportFileBrowserDialog(MapView.getMapView().getContext());
+        browser.setExtensionTypes("p12");
+        browser.setTitle("Select P12 Certificate");
+        browser.setOnDismissListener(new ImportFileBrowserDialog.DialogDismissed() {
+            @Override
+            public void onFileSelected(File file) {
+                importP12File(file);
+            }
+
+            @Override
+            public void onDialogClosed() {
+            }
+        });
+        browser.show();
+    }
+
+    private void importP12File(File file) {
+        TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+        if (item == null || file == null) return;
+
+        try {
+            byte[] bytes = readFileBytes(file);
+            if (bytes.length == 0) {
+                if (settingsStatusTV != null) settingsStatusTV.setText("Selected P12 file was empty.");
+                return;
+            }
+
+            item.isP12Cert = true;
+            item.username = "";
+            item.password = "";
+            item.p12Cert = Base64.encodeToString(bytes, Base64.NO_WRAP);
+            item.p12CertPassword = getText(takP12PasswordET);
+            item.p12DisplayName = file.getName();
+
+            if (takUseP12CB != null) takUseP12CB.setChecked(true);
+            refreshSelectedServerAuthUi(item);
+            if (takServerAdapter != null) takServerAdapter.notifyDataSetChanged();
+            if (settingsStatusTV != null) settingsStatusTV.setText("Loaded " + file.getName() + " for the selected server.");
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to load p12 file", t);
+            if (settingsStatusTV != null) settingsStatusTV.setText("Failed to read the selected P12 file.");
+        }
+    }
+
+    private void clearSelectedServerP12() {
+        TakServerItem item = safeGet(currentServerList, currentSelectedServerIndex);
+        if (item == null) return;
+
+        item.p12Cert = "";
+        item.p12CertPassword = "";
+        item.p12DisplayName = null;
+        setText(takP12PasswordET, "");
+        refreshSelectedServerAuthUi(item);
+        if (takServerAdapter != null) takServerAdapter.notifyDataSetChanged();
+        if (settingsStatusTV != null) settingsStatusTV.setText("Cleared the selected server certificate.");
+    }
+
+    private static byte[] readFileBytes(File file) throws Exception {
+        FileInputStream input = new FileInputStream(file);
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        } finally {
+            input.close();
+        }
+    }
+
+    private static void setVisible(View view, boolean visible) {
+        if (view == null) return;
+        view.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     private void updateConnectedCardTitleFromCallsign(String callsign) {
