@@ -63,7 +63,13 @@ public class TakServerListAdapter extends RecyclerView.Adapter<TakServerListAdap
 
         h.name.setText((item.name == null || item.name.isEmpty()) ? "Unnamed Server" : item.name);
         String addr = (item.address == null) ? "" : item.address;
-        h.sub.setText(addr + ":" + item.port);
+        String authLabel;
+        if (item.isP12Cert) {
+            authLabel = (item.p12Cert == null || item.p12Cert.isEmpty()) ? "P12 pending" : "P12 loaded";
+        } else {
+            authLabel = "Username/password";
+        }
+        h.sub.setText(addr + ":" + item.port + " | " + authLabel);
 
         h.enabled.setOnCheckedChangeListener(null);
         h.enabled.setChecked(item.isEnabled);

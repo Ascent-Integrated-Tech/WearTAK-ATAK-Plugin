@@ -243,6 +243,13 @@
                 android:hint="Port"
                 android:inputType="number" />
 
+            <CheckBox
+                android:id="@+id/takUseP12"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Authenticate with P12 certificate"
+                android:paddingTop="6dp" />
+
             <EditText
                 android:id="@+id/takUsername"
                 android:layout_width="match_parent"
@@ -256,6 +263,46 @@
                 android:layout_height="wrap_content"
                 android:hint="Password (if not P12)"
                 android:inputType="textPassword" />
+
+            <TextView
+                android:id="@+id/takP12Status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="No certificate selected."
+                android:visibility="gone" />
+
+            <EditText
+                android:id="@+id/takP12Password"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="P12 password"
+                android:inputType="textPassword"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/takP12Buttons"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <Button
+                    android:id="@+id/chooseP12Button"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Choose P12 File" />
+
+                <Button
+                    android:id="@+id/clearP12Button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="Clear" />
+            </LinearLayout>
 
         </LinearLayout>
     </ScrollView>

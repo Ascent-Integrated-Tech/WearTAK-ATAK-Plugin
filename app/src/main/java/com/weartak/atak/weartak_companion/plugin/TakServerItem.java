@@ -10,6 +10,7 @@ public class TakServerItem {
     public String password;
     public String p12Cert;
     public String p12CertPassword;
+    public transient String p12DisplayName;
 
     public TakServerItem() {}
 
