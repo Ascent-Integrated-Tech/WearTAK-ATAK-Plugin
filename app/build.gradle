@@ -8,7 +8,7 @@
 
 buildscript {
 
-    ext.PLUGIN_VERSION = "5.6.0"
+    ext.PLUGIN_VERSION = "5.6.1"
     ext.ATAK_VERSION = "5.5.0"
 
     def takdevVersion = '3.+'
@@ -329,4 +329,3 @@ configurations.implementation {
        exclude group: 'androidx.lifecycle', module: 'lifecycle'
        exclude group: 'androidx.lifecycle', module: 'lifecycle-process'
 }       
-
