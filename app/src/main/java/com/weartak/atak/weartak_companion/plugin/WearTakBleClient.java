@@ -14,7 +14,10 @@ import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Handler;
@@ -66,6 +69,8 @@ public class WearTakBleClient {
     private BluetoothGattCharacteristic txNotifyChar; // A11B
     private BluetoothGattCharacteristic rxWriteChar;  // A11C
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
+    private volatile DiscoveredDevice pendingBondDevice = null;
+    private volatile boolean bondReceiverRegistered = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -134,6 +139,34 @@ public class WearTakBleClient {
         return prefs.getString(KEY_PREFERRED_ADDRESS, null);
     }
 
+    private int bondStateOf(BluetoothDevice device) {
+        try {
+            return device.getBondState();
+        } catch (Throwable ignored) {
+            return BluetoothDevice.BOND_NONE;
+        }
+    }
+
+    private boolean isBonded(BluetoothDevice device) {
+        return device != null && bondStateOf(device) == BluetoothDevice.BOND_BONDED;
+    }
+
+    private void registerBondReceiver() {
+        if (appContext == null || bondReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        appContext.registerReceiver(bondStateReceiver, filter);
+        bondReceiverRegistered = true;
+    }
+
+    private void unregisterBondReceiver() {
+        if (appContext == null || !bondReceiverRegistered) return;
+        try {
+            appContext.unregisterReceiver(bondStateReceiver);
+        } catch (Throwable ignored) {
+        }
+        bondReceiverRegistered = false;
+    }
+
     public static class DiscoveredDevice {
         public final String name;
         public final String address;
@@ -175,6 +208,7 @@ public class WearTakBleClient {
         if (bluetoothAdapter == null) return;
 
         scanner = bluetoothAdapter.getBluetoothLeScanner();
+        registerBondReceiver();
         started = true;
         logI("start(): initialized (no auto-connect)");
     }
@@ -182,6 +216,8 @@ public class WearTakBleClient {
     public synchronized void stop() {
         stopScanInternal("stop()");
         closeGattInternal("stop()");
+        unregisterBondReceiver();
+        pendingBondDevice = null;
         started = false;
         bluetoothAdapter = null;
         scanner = null;
@@ -195,6 +231,7 @@ public class WearTakBleClient {
 
         synchronized (rxLock) { rxBuffer.setLength(0); }
         discovered.clear();
+        pendingBondDevice = null;
         setConnected(false);
     }
 
@@ -343,6 +380,42 @@ public class WearTakBleClient {
 
         stopScanInternal("connectToSelectedDevice()");
 
+        BluetoothDevice remote;
+        try {
+            remote = bluetoothAdapter.getRemoteDevice(device.address);
+        } catch (Throwable t) {
+            error("Remote device lookup failed for address=" + device.address);
+            return;
+        }
+
+        if (remote == null) {
+            error("Remote device null for address=" + device.address);
+            return;
+        }
+
+        if (!isBonded(remote)) {
+            pendingBondDevice = device;
+            boolean bondStarted = false;
+            try {
+                bondStarted = remote.createBond();
+            } catch (Throwable t) {
+                error("createBond failed: " + t.getMessage());
+                return;
+            }
+
+            if (!bondStarted && !isBonded(remote)) {
+                error("Unable to start BLE bond for " + device.address);
+                return;
+            }
+
+            if (!bondStarted) {
+                logI("Device already bonded, continuing to connect " + device.address);
+            } else {
+                logI("Bonding started for " + device.address + "; waiting for BOND_BONDED");
+                return;
+            }
+        }
+
         long now = android.os.SystemClock.uptimeMillis();
         long dt = now - lastGattCloseMs;
         long waitMs = (dt < RECONNECT_COOLDOWN_MS) ? (RECONNECT_COOLDOWN_MS - dt) : 0;
@@ -371,6 +444,10 @@ public class WearTakBleClient {
         BluetoothDevice d = bluetoothAdapter.getRemoteDevice(device.address);
         if (d == null) {
             error("Remote device null for address=" + device.address);
+            return;
+        }
+        if (!isBonded(d)) {
+            error("Device must be bonded before BLE connect");
             return;
         }
 
@@ -406,6 +483,11 @@ public class WearTakBleClient {
         if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                 != PackageManager.PERMISSION_GRANTED) {
             error("Missing BLUETOOTH_CONNECT permission");
+            return false;
+        }
+        BluetoothDevice device = bluetoothGatt.getDevice();
+        if (!isBonded(device)) {
+            error("writeJsonLineToWatch: bonded device required");
             return false;
         }
 
@@ -479,6 +561,38 @@ public class WearTakBleClient {
 
     public synchronized boolean isConnected() { return connected; }
 
+    private final BroadcastReceiver bondStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || !BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(intent.getAction())) {
+                return;
+            }
+
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+            if (device == null || device.getAddress() == null) return;
+
+            int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE);
+            int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE);
+            logI("Bond state changed for " + device.getAddress() + ": " + prevBondState + " -> " + bondState);
+
+            DiscoveredDevice pending = pendingBondDevice;
+            if (pending == null || pending.address == null || !pending.address.equals(device.getAddress())) {
+                return;
+            }
+
+            if (bondState == BluetoothDevice.BOND_BONDED) {
+                pendingBondDevice = null;
+                main.post(() -> connectToSelectedDevice(pending));
+                return;
+            }
+
+            if (bondState == BluetoothDevice.BOND_NONE && prevBondState == BluetoothDevice.BOND_BONDING) {
+                pendingBondDevice = null;
+                error("BLE bond failed or was cancelled");
+            }
+        }
+    };
+
     // -------------------- GATT --------------------
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
@@ -487,6 +601,10 @@ public class WearTakBleClient {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 setConnected(true);
+                BluetoothDevice device = gatt.getDevice();
+                if (device != null && device.getAddress() != null) {
+                    savePreferredAddress(device.getAddress());
+                }
 
                 if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
