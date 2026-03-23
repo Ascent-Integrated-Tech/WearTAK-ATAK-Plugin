@@ -34,8 +34,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -70,7 +73,10 @@ public class WearTakBleClient {
     private BluetoothGattCharacteristic rxWriteChar;  // A11C
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
     private volatile DiscoveredDevice pendingBondDevice = null;
+    private volatile DiscoveredDevice pendingReplacementDevice = null;
+    private volatile String pendingBondRecoveryName = null;
     private volatile boolean bondReceiverRegistered = false;
+    private final LinkedHashSet<String> pendingBondRemovals = new LinkedHashSet<>();
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -113,6 +119,7 @@ public class WearTakBleClient {
         void onJson(String jsonLine);
         void onPaired(String deviceId, String callsign);
         void onError(String msg);
+        void onTrustLost(String deviceAddress, String reason);
     }
 
     private final AtomicReference<JsonListener> jsonListener = new AtomicReference<>(null);
@@ -134,9 +141,66 @@ public class WearTakBleClient {
         prefs.edit().putString(KEY_PREFERRED_ADDRESS, addr).apply();
     }
 
+    private void clearPreferredAddress() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit().remove(KEY_PREFERRED_ADDRESS).apply();
+    }
+
     public String getPreferredAddress() {
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         return prefs.getString(KEY_PREFERRED_ADDRESS, null);
+    }
+
+    private void clearPreferredAddressIfMatches(String addr) {
+        if (addr == null) return;
+        String preferred = getPreferredAddress();
+        if (preferred != null && preferred.equals(addr)) {
+            clearPreferredAddress();
+        }
+    }
+
+    private String currentGattAddress() {
+        try {
+            BluetoothGatt gatt = bluetoothGatt;
+            if (gatt == null) return null;
+            BluetoothDevice device = gatt.getDevice();
+            return device != null ? device.getAddress() : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private boolean isTrackedDeviceAddress(String address) {
+        if (address == null) return false;
+
+        DiscoveredDevice pending = pendingBondDevice;
+        if (pending != null && address.equals(pending.address)) return true;
+
+        String active = currentGattAddress();
+        if (active != null && active.equals(address)) return true;
+
+        String preferred = getPreferredAddress();
+        return preferred != null && preferred.equals(address);
+    }
+
+    private void resetSessionAsync(String reason) {
+        main.post(() -> resetSession(reason));
+    }
+
+    private void failSecureSession(String msg, String reason) {
+        error(msg);
+        resetSessionAsync(reason);
+    }
+
+    private void handleTrustLoss(String address, String reason, String msg) {
+        pendingBondDevice = null;
+        clearPreferredAddressIfMatches(address);
+
+        JsonListener l = jsonListener.get();
+        if (l != null) l.onTrustLost(address, reason);
+
+        error(msg);
+        resetSessionAsync(reason + (address == null ? "" : (" " + address)));
     }
 
     private int bondStateOf(BluetoothDevice device) {
@@ -218,6 +282,9 @@ public class WearTakBleClient {
         closeGattInternal("stop()");
         unregisterBondReceiver();
         pendingBondDevice = null;
+        pendingReplacementDevice = null;
+        pendingBondRecoveryName = null;
+        pendingBondRemovals.clear();
         started = false;
         bluetoothAdapter = null;
         scanner = null;
@@ -232,6 +299,11 @@ public class WearTakBleClient {
         synchronized (rxLock) { rxBuffer.setLength(0); }
         discovered.clear();
         pendingBondDevice = null;
+        pendingReplacementDevice = null;
+        if (reason == null || !reason.startsWith("bond_recovery ")) {
+            pendingBondRecoveryName = null;
+        }
+        pendingBondRemovals.clear();
         setConnected(false);
     }
 
@@ -393,6 +465,10 @@ public class WearTakBleClient {
             return;
         }
 
+        if (unpairConflictingBondedWatchesIfNeeded(device)) {
+            return;
+        }
+
         if (!isBonded(remote)) {
             pendingBondDevice = device;
             boolean bondStarted = false;
@@ -428,6 +504,174 @@ public class WearTakBleClient {
         }
     }
 
+    private synchronized List<BluetoothDevice> getBondReplacementCandidates(DiscoveredDevice targetDevice) {
+        List<BluetoothDevice> wearTakCandidates = new ArrayList<>();
+        if (targetDevice == null || targetDevice.address == null) return wearTakCandidates;
+        if (!started) start();
+
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+            return wearTakCandidates;
+        }
+        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) {
+            return wearTakCandidates;
+        }
+
+        Set<BluetoothDevice> bondedDevices;
+        try {
+            bondedDevices = bluetoothAdapter.getBondedDevices();
+        } catch (Throwable ignored) {
+            return wearTakCandidates;
+        }
+        if (bondedDevices == null || bondedDevices.isEmpty()) return wearTakCandidates;
+
+        List<BluetoothDevice> otherBondedDevices = new ArrayList<>();
+        String targetName = normalizeWearTakName(targetDevice.name);
+        for (BluetoothDevice bonded : bondedDevices) {
+            if (bonded == null) continue;
+            String address = bonded.getAddress();
+            if (address == null || address.equals(targetDevice.address)) continue;
+            if (!isBonded(bonded)) continue;
+            otherBondedDevices.add(bonded);
+            if (!isWearTakBondCandidate(bonded)) continue;
+
+            String bondedName = normalizeWearTakName(safeGetDeviceLabel(bonded));
+            if (targetName != null && bondedName != null
+                    && targetName.equalsIgnoreCase(bondedName)) {
+                continue;
+            }
+            wearTakCandidates.add(bonded);
+        }
+
+        if (!wearTakCandidates.isEmpty()) {
+            return wearTakCandidates;
+        }
+        if (otherBondedDevices.size() == 1) {
+            wearTakCandidates.add(otherBondedDevices.get(0));
+        }
+        return wearTakCandidates;
+    }
+
+    private synchronized boolean unpairConflictingBondedWatchesIfNeeded(DiscoveredDevice targetDevice) {
+        List<BluetoothDevice> candidates = getBondReplacementCandidates(targetDevice);
+        if (candidates.isEmpty()) return false;
+
+        pendingReplacementDevice = targetDevice;
+        pendingBondRemovals.clear();
+        clearPairedDeviceIdentity();
+
+        boolean waitingForRemoval = false;
+        for (BluetoothDevice bonded : candidates) {
+            String address = bonded.getAddress();
+            if (address == null || !isBonded(bonded)) continue;
+
+            pendingBondRemovals.add(address);
+            clearPreferredAddressIfMatches(address);
+
+            boolean removalStarted = removeBondIfPossible(bonded, "connect_replace_watch");
+            if (!removalStarted && isBonded(bonded)) {
+                pendingBondRemovals.clear();
+                pendingReplacementDevice = null;
+                error("Unable to unpair existing watch " + safeGetDeviceLabel(bonded));
+                return true;
+            }
+            if (!removalStarted) {
+                pendingBondRemovals.remove(address);
+                continue;
+            }
+            waitingForRemoval = true;
+        }
+
+        if (!waitingForRemoval) {
+            pendingReplacementDevice = null;
+            pendingBondRemovals.clear();
+            return false;
+        }
+
+        logI("Waiting for old bonded watch removal before connecting " + targetDevice.address);
+        return true;
+    }
+
+    private boolean matchesNormalizedName(String expectedName, DiscoveredDevice device) {
+        if (expectedName == null || device == null) return false;
+        String candidate = normalizeWearTakName(device.name);
+        return candidate != null && expectedName.equalsIgnoreCase(candidate);
+    }
+
+    private DiscoveredDevice findBestRecoveryTarget(List<DiscoveredDevice> devices, String expectedName) {
+        if (devices == null || expectedName == null) return null;
+        DiscoveredDevice best = null;
+        for (DiscoveredDevice device : devices) {
+            if (!matchesNormalizedName(expectedName, device)) continue;
+            if (best == null || device.rssi > best.rssi) {
+                best = device;
+            }
+        }
+        return best;
+    }
+
+    private synchronized boolean scheduleBondRecoveryScan(DiscoveredDevice pending) {
+        if (pending == null || pending.address == null) return false;
+
+        String recoveryName = normalizeWearTakName(pending.name);
+        if (recoveryName == null) return false;
+        if (recoveryName.equalsIgnoreCase(pendingBondRecoveryName)) return false;
+        if (!getBondReplacementCandidates(pending).isEmpty()) return false;
+
+        pendingBondRecoveryName = recoveryName;
+        resetSession("bond_recovery " + pending.address);
+        logI("Rescanning once for " + recoveryName + " after bond failure");
+
+        AtomicBoolean reconnectIssued = new AtomicBoolean(false);
+        ScanListener recoveryListener = new ScanListener() {
+            @Override
+            public void onDeviceFound(DiscoveredDevice device) {
+                if (!matchesNormalizedName(recoveryName, device)) return;
+                if (!reconnectIssued.compareAndSet(false, true)) return;
+
+                List<DiscoveredDevice> snapshot = stopScanInternal("bond recovery match found");
+                DiscoveredDevice recovered = findBestRecoveryTarget(snapshot, recoveryName);
+                if (recovered == null) recovered = device;
+                final DiscoveredDevice recoveredDevice = recovered;
+                logI("Recovered fresh advertising address " + recoveredDevice.address + " for " + recoveryName);
+                main.post(() -> connectToSelectedDevice(recoveredDevice));
+            }
+
+            @Override
+            public void onScanFinished(List<DiscoveredDevice> devices) {
+                if (!reconnectIssued.compareAndSet(false, true)) return;
+
+                DiscoveredDevice recovered = findBestRecoveryTarget(devices, recoveryName);
+                if (recovered != null) {
+                    final DiscoveredDevice recoveredDevice = recovered;
+                    logI("Bond recovery scan found fresh address " + recoveredDevice.address + " for " + recoveryName);
+                    main.post(() -> connectToSelectedDevice(recoveredDevice));
+                    return;
+                }
+
+                pendingBondRecoveryName = null;
+                handleTrustLoss(
+                        pending.address,
+                        "bond_recovery_not_found",
+                        "Unable to rediscover watch after bond reset");
+            }
+
+            @Override
+            public void onScanError(String msg) {
+                if (!reconnectIssued.compareAndSet(false, true)) return;
+
+                pendingBondRecoveryName = null;
+                handleTrustLoss(
+                        pending.address,
+                        "bond_recovery_scan_error",
+                        "Bond recovery scan failed: " + msg);
+            }
+        };
+
+        scanForDevices(recoveryListener);
+        return true;
+    }
+
     private synchronized void connectGattNow(DiscoveredDevice device) {
         if (device == null || device.address == null) return;
 
@@ -447,7 +691,10 @@ public class WearTakBleClient {
             return;
         }
         if (!isBonded(d)) {
-            error("Device must be bonded before BLE connect");
+            handleTrustLoss(
+                    device.address,
+                    "bond_lost_before_connect",
+                    "Device must be bonded before BLE connect");
             return;
         }
 
@@ -487,7 +734,10 @@ public class WearTakBleClient {
         }
         BluetoothDevice device = bluetoothGatt.getDevice();
         if (!isBonded(device)) {
-            error("writeJsonLineToWatch: bonded device required");
+            handleTrustLoss(
+                    device != null ? device.getAddress() : null,
+                    "bond_lost_before_write",
+                    "writeJsonLineToWatch: bonded device required");
             return false;
         }
 
@@ -546,6 +796,19 @@ public class WearTakBleClient {
             return;
         }
 
+        BluetoothDevice device = bluetoothGatt.getDevice();
+        if (!isBonded(device)) {
+            synchronized (txLock) {
+                txQueue.clear();
+                txInFlight = false;
+            }
+            handleTrustLoss(
+                    device != null ? device.getAddress() : null,
+                    "bond_lost_during_tx",
+                    "TX aborted: bonded device required");
+            return;
+        }
+
         rxWriteChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rxWriteChar.setValue(next);
 
@@ -555,7 +818,7 @@ public class WearTakBleClient {
                 txQueue.clear();
                 txInFlight = false;
             }
-            error("TX writeCharacteristic returned false");
+            failSecureSession("TX writeCharacteristic returned false", "tx_write_start_failed");
         }
     }
 
@@ -573,22 +836,43 @@ public class WearTakBleClient {
 
             int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE);
             int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE);
-            logI("Bond state changed for " + device.getAddress() + ": " + prevBondState + " -> " + bondState);
+            String address = device.getAddress();
+            logI("Bond state changed for " + address + ": " + prevBondState + " -> " + bondState);
 
-            DiscoveredDevice pending = pendingBondDevice;
-            if (pending == null || pending.address == null || !pending.address.equals(device.getAddress())) {
+            if (pendingBondRemovals.contains(address) && bondState == BluetoothDevice.BOND_NONE) {
+                pendingBondRemovals.remove(address);
+                clearPreferredAddressIfMatches(address);
+                if (pendingBondRemovals.isEmpty()) {
+                    finishPendingBondReplacement("bond_removed " + address);
+                }
                 return;
             }
 
-            if (bondState == BluetoothDevice.BOND_BONDED) {
+            DiscoveredDevice pending = pendingBondDevice;
+            boolean pendingMatch = pending != null && pending.address != null && pending.address.equals(address);
+
+            if (bondState == BluetoothDevice.BOND_BONDED && pendingMatch) {
                 pendingBondDevice = null;
+                pendingBondRecoveryName = null;
                 main.post(() -> connectToSelectedDevice(pending));
                 return;
             }
 
-            if (bondState == BluetoothDevice.BOND_NONE && prevBondState == BluetoothDevice.BOND_BONDING) {
-                pendingBondDevice = null;
-                error("BLE bond failed or was cancelled");
+            if (bondState != BluetoothDevice.BOND_NONE || prevBondState == BluetoothDevice.BOND_NONE) {
+                return;
+            }
+
+            if (pendingMatch && prevBondState == BluetoothDevice.BOND_BONDING) {
+                if (scheduleBondRecoveryScan(pending)) {
+                    return;
+                }
+                pendingBondRecoveryName = null;
+                handleTrustLoss(address, "bond_cancelled", "BLE bond failed or was cancelled");
+                return;
+            }
+
+            if (isTrackedDeviceAddress(address)) {
+                handleTrustLoss(address, "bond_lost", "BLE bond lost for " + address);
             }
         }
     };
@@ -639,13 +923,13 @@ public class WearTakBleClient {
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                error("Service discovery failed: " + status);
+                failSecureSession("Service discovery failed: " + status, "service_discovery_failed_" + status);
                 return;
             }
 
             BluetoothGattService service = gatt.getService(COMPANION_SERVICE_UUID);
             if (service == null) {
-                error("Companion service A11A missing");
+                failSecureSession("Companion service A11A missing", "service_missing");
                 return;
             }
 
@@ -653,7 +937,12 @@ public class WearTakBleClient {
             rxWriteChar  = service.getCharacteristic(RX_FROM_COMPANION_UUID);
 
             if (txNotifyChar == null) {
-                error("TX notify char A11B missing");
+                failSecureSession("TX notify char A11B missing", "tx_char_missing");
+                return;
+            }
+
+            if (rxWriteChar == null) {
+                failSecureSession("RX write char A11C missing", "rx_char_missing");
                 return;
             }
 
@@ -669,19 +958,19 @@ public class WearTakBleClient {
 
             boolean ok = gatt.setCharacteristicNotification(tx, true);
             if (!ok) {
-                error("setCharacteristicNotification failed");
+                failSecureSession("setCharacteristicNotification failed", "set_notification_failed");
                 return;
             }
 
             BluetoothGattDescriptor cccd = tx.getDescriptor(CCCD_UUID);
             if (cccd == null) {
-                error("CCCD missing on A11B");
+                failSecureSession("CCCD missing on A11B", "cccd_missing");
                 return;
             }
 
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
             boolean wrote = gatt.writeDescriptor(cccd);
-            if (!wrote) error("writeDescriptor(CCCD) failed");
+            if (!wrote) failSecureSession("writeDescriptor(CCCD) failed", "cccd_write_start_failed");
         }
 
         @Override
@@ -693,7 +982,7 @@ public class WearTakBleClient {
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
             } else {
-                error("CCCD write failed: " + status);
+                failSecureSession("CCCD write failed: " + status, "cccd_write_failed_" + status);
             }
         }
 
@@ -730,7 +1019,7 @@ public class WearTakBleClient {
                     txQueue.clear();
                     txInFlight = false;
                 }
-                error("TX chunk write failed status=" + status);
+                failSecureSession("TX chunk write failed status=" + status, "tx_chunk_write_failed_" + status);
                 return;
             }
 
@@ -774,6 +1063,14 @@ public class WearTakBleClient {
         prefs.edit()
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)
+                .apply();
+    }
+
+    private void clearPairedDeviceIdentity() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit()
+                .remove(KEY_PAIRED_UID)
+                .remove(KEY_PAIRED_CALLSIGN)
                 .apply();
     }
 
@@ -843,6 +1140,71 @@ public class WearTakBleClient {
             return d.getName();
         } catch (Throwable ignored) {}
         return null;
+    }
+
+    private String safeGetDeviceAlias(BluetoothDevice d) {
+        try {
+            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) return null;
+            return d.getAlias();
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private String safeGetDeviceLabel(BluetoothDevice d) {
+        String alias = safeGetDeviceAlias(d);
+        if (alias != null && !alias.trim().isEmpty()) return alias.trim();
+
+        String name = safeGetDeviceName(d);
+        if (name != null && !name.trim().isEmpty()) return name.trim();
+
+        String address = d != null ? d.getAddress() : null;
+        return address != null ? address : "Unknown device";
+    }
+
+    private boolean isWearTakBondCandidate(BluetoothDevice d) {
+        if (d == null) return false;
+
+        String address = d.getAddress();
+        String preferred = getPreferredAddress();
+        if (preferred != null && preferred.equals(address)) return true;
+
+        String alias = safeGetDeviceAlias(d);
+        if (startsWithWT(alias)) return true;
+
+        String name = safeGetDeviceName(d);
+        return startsWithWT(name);
+    }
+
+    private boolean removeBondIfPossible(BluetoothDevice device, String reason) {
+        if (device == null) return false;
+        try {
+            Object out = BluetoothDevice.class.getMethod("removeBond").invoke(device);
+            boolean removed = out instanceof Boolean && (Boolean) out;
+            logI("removeBond(" + reason + "): " + safeGetDeviceLabel(device) + " -> " + removed);
+            return removed;
+        } catch (Throwable t) {
+            logW("removeBond(" + reason + ") failed: " + t.getMessage());
+            return false;
+        }
+    }
+
+    private String normalizeWearTakName(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) return null;
+        if (trimmed.startsWith("WT-")) trimmed = trimmed.substring(3);
+        return trimmed.trim().isEmpty() ? null : trimmed.trim();
+    }
+
+    private synchronized void finishPendingBondReplacement(String reason) {
+        DiscoveredDevice next = pendingReplacementDevice;
+        pendingReplacementDevice = null;
+        pendingBondRemovals.clear();
+        if (next == null) return;
+
+        logI("finishPendingBondReplacement(): " + reason + " -> " + next.address);
+        main.post(() -> connectToSelectedDevice(next));
     }
 
     private boolean startsWithWT(String s) { return s != null && s.startsWith("WT-"); }
