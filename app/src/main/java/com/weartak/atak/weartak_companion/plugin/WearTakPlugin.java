@@ -2,6 +2,7 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -192,6 +193,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
     }
 
+    private void connectToDevice(WearTakBleClient.DiscoveredDevice device) {
+        if (device == null || bleClient == null) return;
+
+        selectedDevice = device;
+        currentConnectedAddress = device.address;
+        bleClient.resetSession("UI connect " + device.address);
+        bleClient.connectToSelectedDevice(device);
+
+        if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
+    }
+
     // ------------------ Plugin lifecycle ------------------
     public WearTakPlugin(IServiceController serviceController) {
         this.serviceController = serviceController;
@@ -344,6 +356,24 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override public void onPaired(String deviceId, String callsign) { }
 
             @Override
+            public void onTrustLost(String deviceAddress, String reason) {
+                clearPreferredDevice(deviceAddress);
+                mainHandler.post(() -> {
+                    currentConnectedAddress = null;
+                    hideConnectedCard();
+                    if (connectionStatusTV != null) connectionStatusTV.setText("DISCONNECTED");
+                    if (deviceAdapter != null) {
+                        deviceAdapter.clearConnectionMarkers();
+                        refreshDeviceListUi();
+                    }
+                    if (settingsStatusTV != null && settingsScreenRoot != null
+                            && settingsScreenRoot.getVisibility() == View.VISIBLE) {
+                        settingsStatusTV.setText("BLE trust lost. Re-pair required.");
+                    }
+                });
+            }
+
+            @Override
             public void onError(String msg) {
                 mainHandler.post(() -> {
                     if (settingsStatusTV != null && settingsScreenRoot != null
@@ -390,13 +420,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             deviceAdapter = new BleDeviceAdapter(new BleDeviceAdapter.Listener() {
                 @Override
                 public void onConnectClicked(WearTakBleClient.DiscoveredDevice device) {
-                    selectedDevice = device;
-                    if (bleClient != null) {
-                        currentConnectedAddress = device.address;
-                        bleClient.resetSession("UI connect " + device.address);
-                        bleClient.connectToSelectedDevice(device);
-                    }
-                    if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
+                    connectToDevice(device);
                 }
 
                 @Override
@@ -939,6 +963,24 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 .putString(KEY_PREF_ADDR, address.trim())
                 .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
                 .putLong(KEY_PREF_SET_AT, System.currentTimeMillis())
+                .apply();
+    }
+
+    private void clearPreferredDevice(String address) {
+        if (pluginContext == null) return;
+
+        SharedPreferences prefs = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String current = prefs.getString(KEY_PREF_ADDR, null);
+        if (address != null) {
+            if (current == null) return;
+            current = current.trim();
+            if (!address.equals(current)) return;
+        }
+
+        prefs.edit()
+                .remove(KEY_PREF_ADDR)
+                .remove(KEY_PREF_NAME)
+                .remove(KEY_PREF_SET_AT)
                 .apply();
     }
 
