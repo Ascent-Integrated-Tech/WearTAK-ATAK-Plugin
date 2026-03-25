@@ -746,6 +746,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             setText(takPasswordET, item.password);
             setText(takP12PasswordET, "");
         } else {
+            item.p12CertPassword = TakServerItem.normalizeP12Password(item.p12CertPassword);
             setText(takUsernameET, "");
             setText(takPasswordET, "");
             setText(takP12PasswordET, item.p12CertPassword);
@@ -770,7 +771,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         } else {
             item.username = "";
             item.password = "";
-            item.p12CertPassword = getText(takP12PasswordET);
+            item.p12CertPassword = TakServerItem.normalizeP12Password(getText(takP12PasswordET));
         }
     }
 
@@ -819,7 +820,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
 
-        boolean ok = bleClient.writeJsonLineToWatch(root.toString());
+        String jsonLine = root.toString().replace("\\/", "/");
+        boolean ok = bleClient.writeJsonLineToWatch(jsonLine);
         if (settingsStatusTV != null) {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
@@ -991,6 +993,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (useP12) {
             item.username = "";
             item.password = "";
+            item.p12CertPassword = TakServerItem.normalizeP12Password(item.p12CertPassword);
+            setText(takP12PasswordET, item.p12CertPassword);
         } else {
             item.p12Cert = "";
             item.p12CertPassword = "";
@@ -1076,11 +1080,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             item.isP12Cert = true;
             item.username = "";
             item.password = "";
-            item.p12Cert = Base64.encodeToString(bytes, Base64.NO_WRAP);
-            item.p12CertPassword = getText(takP12PasswordET);
+            item.p12Cert = TakServerItem.normalizeP12Cert(Base64.encodeToString(bytes, Base64.NO_WRAP));
+            item.p12CertPassword = TakServerItem.normalizeP12Password(getText(takP12PasswordET));
             item.p12DisplayName = file.getName();
 
             if (takUseP12CB != null) takUseP12CB.setChecked(true);
+            setText(takP12PasswordET, item.p12CertPassword);
             refreshSelectedServerAuthUi(item);
             if (takServerAdapter != null) takServerAdapter.notifyDataSetChanged();
             if (settingsStatusTV != null) settingsStatusTV.setText("Loaded " + file.getName() + " for the selected server.");
