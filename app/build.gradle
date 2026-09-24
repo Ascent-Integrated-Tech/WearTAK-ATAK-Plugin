@@ -8,8 +8,8 @@
 
 buildscript {
 
-    ext.PLUGIN_VERSION = "5.7.0"
-    ext.ATAK_VERSION = "5.5.0"
+    ext.PLUGIN_VERSION = "5.8.0.3"
+    ext.ATAK_VERSION = "5.5.1"
 
     def takdevVersion = '3.+'
 
@@ -288,6 +288,9 @@ def getCommandFlavor() {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: '*.jar')
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20231013'
 
     // This is likely pulling in appcompat transitively depending on your environment.
     implementation("com.google.android.gms:play-services-wearable:18.1.0") {

@@ -8,6 +8,7 @@ local.properties
 # ===== IDE =====
 .idea/
 *.iml
+*.takdev/
 
 # ===== OS =====
 .DS_Store
