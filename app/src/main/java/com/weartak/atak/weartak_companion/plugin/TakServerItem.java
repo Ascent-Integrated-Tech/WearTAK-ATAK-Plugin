@@ -12,6 +12,7 @@ public class TakServerItem {
     public String password;
     public String p12Cert;
     public String p12CertPassword;
+    public String serverId;
     public transient String p12DisplayName;
 
     public TakServerItem() {}
@@ -43,6 +44,7 @@ public class TakServerItem {
         t.password = o.optString("password", "");
         t.p12Cert = normalizeP12Cert(o.optString("p12Cert", ""));
         t.p12CertPassword = o.optString("p12CertPassword", "");
+        t.serverId = normalizeOptional(o.optString("serverId", ""));
         if (t.isP12Cert) {
             t.p12CertPassword = normalizeP12Password(t.p12CertPassword);
         }
@@ -61,7 +63,16 @@ public class TakServerItem {
             o.put("password", password);
             o.put("p12Cert", normalizeP12Cert(p12Cert));
             o.put("p12CertPassword", isP12Cert ? normalizeP12Password(p12CertPassword) : p12CertPassword);
+            if (normalizeOptional(serverId) != null) {
+                o.put("serverId", normalizeOptional(serverId));
+            }
         } catch (Throwable ignored) {}
         return o;
+    }
+
+    private static String normalizeOptional(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

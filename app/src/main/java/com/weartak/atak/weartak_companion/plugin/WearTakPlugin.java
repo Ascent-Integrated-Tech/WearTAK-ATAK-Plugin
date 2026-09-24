@@ -31,6 +31,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -51,6 +52,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private static final String TAG = "WTK/Plugin";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private volatile Boolean lastSettingsApplyResult = null;
 
     private WearTakBleClient bleClient;
     private BleCotBridge bleCotBridge;
@@ -311,7 +313,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             @Override
             public void onJson(String jsonLine) {
-                Log.d(TAG, "RX JSON: " + jsonLine);
+                Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
 
                 // CoT forwarder path (your design)
                 if (bleCotBridge != null) {
@@ -334,7 +336,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             applySettingsPayloadDiscretely(payload, "settings_request");
 
                             mainHandler.post(() -> {
-                                if (settingsStatusTV != null) settingsStatusTV.setText("Settings loaded from watch.");
+                                if (settingsStatusTV != null && lastSettingsApplyResult == null) {
+                                    settingsStatusTV.setText("Settings loaded from watch.");
+                                }
                             });
                         }
                     }
@@ -343,9 +347,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         JSONObject p = env.optJSONObject("payload");
                         boolean ok = (p != null) && p.optBoolean("ok", false);
                         String err = (p != null) ? p.optString("error", "") : "";
+                        lastSettingsApplyResult = ok;
                         mainHandler.post(() -> {
                             if (settingsStatusTV != null) {
-                                settingsStatusTV.setText(ok ? "Watch accepted settings." : ("Watch rejected settings: " + err));
+                                settingsStatusTV.setText(ok
+                                        ? "Settings validated and saved on watch; server connection not yet verified."
+                                        : ("Watch could not apply settings: " + err));
                             }
                         });
                     }
@@ -691,6 +698,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // ---------- SETTINGS: request / parse / apply ----------
     private void requestSettingsFromWatch(String reason) {
         if (bleClient == null) return;
+        lastSettingsApplyResult = null;
         String req = "{\"msg_type\":\"request_settings\"}";
         boolean ok = bleClient.writeJsonLineToWatch(req);
 
@@ -821,6 +829,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         String jsonLine = root.toString().replace("\\/", "/");
+        lastSettingsApplyResult = null;
         boolean ok = bleClient.writeJsonLineToWatch(jsonLine);
         if (settingsStatusTV != null) {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
@@ -1138,7 +1147,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void applySettingsPayloadDiscretely(JSONObject payload, String reason) {
         if (payload == null) return;
-        Log.i(TAG, "applySettingsPayloadDiscretely() for " + reason + "with payload: " + payload);
+        JSONArray servers = payload.optJSONArray("takServerList");
+        Log.i(TAG, "applySettingsPayloadDiscretely reason=" + reason
+                + " serverCount=" + (servers == null ? 0 : servers.length()));
 
         // callsign (device-wide)
         if (payload.has("callsign")) {
