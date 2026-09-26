@@ -34,7 +34,9 @@ import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import gov.tak.api.plugin.IPlugin;
 import gov.tak.api.plugin.IServiceController;
@@ -55,6 +57,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile Boolean lastSettingsApplyResult = null;
 
     private WearTakBleClient bleClient;
+    private GarminConnectIqClient garminClient;
+    private volatile boolean garminEnabled;
     private BleCotBridge bleCotBridge;
 
     // ------------------ UI ROOT ------------------
@@ -67,6 +71,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // Device screen
     private TextView connectionStatusTV;
+    private TextView garminConnectionStatusTV;
+    private Button garminToggleButton;
     private Button scanButton;
     private RecyclerView deviceList;
     private TextView emptyState;
@@ -408,6 +414,77 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     @Override
     public void onStop() {
         if (bleClient != null) bleClient.stop();
+        setGarminEnabled(false);
+    }
+
+    private void setGarminEnabled(boolean enabled) {
+        if (garminEnabled == enabled) return;
+        garminEnabled = enabled;
+        if (enabled) {
+            if (garminClient == null) {
+                garminClient = new GarminConnectIqClient(pluginContext,
+                        new GarminConnectIqClient.Listener() {
+                            @Override
+                            public void onStatusChanged(String status) {
+                                mainHandler.post(() -> {
+                                    if (garminConnectionStatusTV != null) {
+                                        garminConnectionStatusTV.setText(status);
+                                    }
+                                });
+                            }
+
+                            @Override
+                            public void onMessageReceived(JSONObject envelope) {
+                                mainHandler.post(() -> handleGarminMessage(envelope));
+                            }
+                        });
+            }
+            garminClient.start();
+        } else if (garminClient != null) {
+            garminClient.stop();
+        }
+
+        mainHandler.post(() -> {
+            if (garminToggleButton != null) {
+                garminToggleButton.setText(enabled
+                        ? "Disable Garmin Connect IQ"
+                        : "Enable Garmin Connect IQ");
+            }
+            if (!enabled && garminConnectionStatusTV != null) {
+                garminConnectionStatusTV.setText("Garmin Connect IQ is off.");
+            }
+        });
+    }
+
+    private void handleGarminMessage(JSONObject envelope) {
+        if (!garminEnabled) return;
+        String msgType = envelope.optString("msgType", "");
+        Log.i(TAG, "Garmin Connect IQ message: " + msgType);
+        if (garminConnectionStatusTV != null) {
+            garminConnectionStatusTV.setText("Garmin watch active (" + msgType + ").");
+        }
+        if ("entity_sync_request".equals(msgType)) {
+            JSONObject requestPayload = envelope.optJSONObject("payload");
+            int requestedLimit = requestPayload == null ? 50 : requestPayload.optInt("limit", 50);
+            List<Map<String, Object>> entities = bleCotBridge == null
+                    ? Collections.emptyList()
+                    : bleCotBridge.getGarminEntitySnapshot(requestedLimit);
+            Map<String, Object> responsePayload = new HashMap<>();
+            responsePayload.put("entities", entities);
+            if (garminClient == null || !garminClient.sendMessage("entities", responsePayload)) {
+                Log.w(TAG, "Unable to send Garmin entity snapshot");
+                if (garminConnectionStatusTV != null) {
+                    garminConnectionStatusTV.setText("Garmin connected, but entity sync could not be sent.");
+                }
+            } else if (garminConnectionStatusTV != null) {
+                garminConnectionStatusTV.setText("Garmin watch active: sending "
+                        + entities.size() + " nearby unit(s).");
+            }
+            return;
+        }
+        if (bleCotBridge != null) {
+            bleCotBridge.handleGarminMessage(envelope);
+        }
     }
 
     // ------------------ UI build / pane ------------------
@@ -432,6 +509,19 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
+            garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
+            if (garminClient != null) {
+                garminConnectionStatusTV.setText(garminClient.getStatus());
+            } else {
+                garminConnectionStatusTV.setText("Garmin Connect IQ is off.");
+            }
+            garminToggleButton = paneView.findViewById(R.id.garminToggleButton);
+            garminToggleButton.setText(garminEnabled
+                    ? "Disable Garmin Connect IQ"
+                    : "Enable Garmin Connect IQ");
+            garminToggleButton.setOnClickListener(v -> {
+                setGarminEnabled(!garminEnabled);
+            });
             scanButton = paneView.findViewById(R.id.scanButton);
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
