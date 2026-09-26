@@ -32,6 +32,27 @@
             android:textColor="@android:color/white"
             android:layout_marginBottom="10dp" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Garmin Connect IQ"
+            android:textStyle="bold"
+            android:paddingTop="4dp" />
+
+        <TextView
+            android:id="@+id/garminConnectionStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Garmin Connect IQ is off."
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp" />
+
+        <Button
+            android:id="@+id/garminToggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enable Garmin Connect IQ" />
+
         <Button
             android:id="@+id/scanButton"
             android:layout_width="match_parent"
