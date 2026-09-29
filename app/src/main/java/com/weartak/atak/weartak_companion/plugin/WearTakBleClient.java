@@ -1315,6 +1315,11 @@ public class WearTakBleClient {
             main.post(() -> {
                 synchronized (WearTakBleClient.this) {
                     if (!started || gatt != bluetoothGatt) return;
+                    // Android often reports a service change during initial setup; discovery after MTU handles that.
+                    if (!sessionReady) {
+                        logI("onServiceChanged(): ignored during session setup");
+                        return;
+                    }
                     boolean eligible = connected || reconnectActive;
                     resetSession("GATT services changed");
                     handleUnexpectedDisconnect(eligible, "GATT services changed");
