@@ -108,8 +108,16 @@ public class WearTakBleClient {
     private static final long RECONNECT_RETRY_DELAY_MS = 60_000L;
     private static final long RECONNECT_SCAN_WINDOW_MS = 15_000L;
     private static final long RECONNECT_CONNECT_TIMEOUT_MS = 45_000L;
+    private static final long HEALTH_CHECK_INTERVAL_MS = 30_000L;
+    private static final long HEALTH_CHECK_TIMEOUT_MS = 10_000L;
+    private static final String HEALTH_CHECK_REQUEST = "{\"msg_type\":\"request_settings\"}";
 
     private volatile boolean reconnectActive = false;
+    private boolean sessionReady = false;
+    private boolean awaitingHealthResponse = false;
+    private int missedHealthResponses = 0;
+    private Runnable healthCheckRunnable = null;
+    private Runnable healthTimeoutRunnable = null;
     private int reconnectAttempt = 0;
     private int reconnectGeneration = 0;
     private Runnable reconnectRunnable = null;
@@ -789,9 +797,68 @@ public class WearTakBleClient {
         logI("setAutoReconnectEnabled(): " + enabled);
         if (!enabled) {
             cancelReconnectLoop("auto-reconnect disabled");
+            clearHealthCheck();
         } else {
+            scheduleHealthCheck();
             resumeAutoReconnect("auto-reconnect enabled");
         }
+    }
+
+    private synchronized void clearHealthCheck() {
+        if (healthCheckRunnable != null) main.removeCallbacks(healthCheckRunnable);
+        if (healthTimeoutRunnable != null) main.removeCallbacks(healthTimeoutRunnable);
+        healthCheckRunnable = null;
+        healthTimeoutRunnable = null;
+        awaitingHealthResponse = false;
+        missedHealthResponses = 0;
+    }
+
+    private synchronized void scheduleHealthCheck() {
+        if (!sessionReady || !connected || !isAutoReconnectEnabled() || !isReconnectArmed()) return;
+        if (healthCheckRunnable != null) main.removeCallbacks(healthCheckRunnable);
+        healthCheckRunnable = this::sendHealthCheck;
+        main.postDelayed(healthCheckRunnable, HEALTH_CHECK_INTERVAL_MS);
+    }
+
+    private synchronized void sendHealthCheck() {
+        healthCheckRunnable = null;
+        if (!sessionReady || !connected || !isAutoReconnectEnabled() || !isReconnectArmed()) return;
+        awaitingHealthResponse = true;
+        healthTimeoutRunnable = () -> {
+            synchronized (WearTakBleClient.this) {
+                healthTimeoutRunnable = null;
+                if (!awaitingHealthResponse || !sessionReady || !connected) return;
+                awaitingHealthResponse = false;
+                if (++missedHealthResponses >= 2) {
+                    failSecureSession("Watch stopped responding", "health_check_timeout");
+                } else {
+                    logW("Watch health check timed out; retrying");
+                    scheduleHealthCheck();
+                }
+            }
+        };
+        main.postDelayed(healthTimeoutRunnable, HEALTH_CHECK_TIMEOUT_MS);
+        if (!writeJsonLineToWatch(HEALTH_CHECK_REQUEST)) {
+            failSecureSession("Watch health check could not be sent", "health_check_send_failed");
+        }
+    }
+
+    private synchronized boolean handleHealthResponse(String line) {
+        if (!awaitingHealthResponse) return false;
+        try {
+            JSONObject env = new JSONObject(line);
+            if (!"settings_request".equals(env.optString("msgType", ""))
+                    || env.optJSONObject("payload") == null) return false;
+        } catch (org.json.JSONException e) {
+            return false;
+        }
+        awaitingHealthResponse = false;
+        missedHealthResponses = 0;
+        if (healthTimeoutRunnable != null) main.removeCallbacks(healthTimeoutRunnable);
+        healthTimeoutRunnable = null;
+        logI("Watch health check acknowledged");
+        scheduleHealthCheck();
+        return true;
     }
 
     /** True while the plugin is waiting for / attempting an automatic reconnect. */
@@ -1339,6 +1406,10 @@ public class WearTakBleClient {
                     armReconnect(sameDevice ? last.name : null);
                 }
                 onReconnectSessionReady();
+                synchronized (WearTakBleClient.this) {
+                    sessionReady = true;
+                    scheduleHealthCheck();
+                }
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
             } else {
@@ -1358,15 +1429,17 @@ public class WearTakBleClient {
 
             String chunk = new String(data, StandardCharsets.UTF_8);
 
+            List<String> lines = new ArrayList<>();
             synchronized (rxLock) {
                 rxBuffer.append(chunk);
                 int idx;
                 while ((idx = rxBuffer.indexOf("\n")) >= 0) {
                     String line = rxBuffer.substring(0, idx).trim();
                     rxBuffer.delete(0, idx + 1);
-                    if (!line.isEmpty()) handleJsonLine(line);
+                    if (!line.isEmpty()) lines.add(line);
                 }
             }
+            for (String line : lines) handleJsonLine(line);
         }
 
         @Override
@@ -1391,6 +1464,7 @@ public class WearTakBleClient {
     };
 
     private void handleJsonLine(String line) {
+        if (handleHealthResponse(line)) return;
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
 
@@ -1439,6 +1513,8 @@ public class WearTakBleClient {
     // -------------------- helpers --------------------
 
     private synchronized void closeGattInternal(String reason) {
+        clearHealthCheck();
+        sessionReady = false;
         try {
             if (bluetoothGatt != null) {
                 if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
