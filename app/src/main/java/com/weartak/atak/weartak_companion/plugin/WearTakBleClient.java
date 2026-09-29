@@ -104,7 +104,8 @@ public class WearTakBleClient {
     private static final String KEY_AUTO_RECONNECT = "auto_reconnect_enabled"; // default OFF
     private static final String KEY_PREFERRED_NAME = "preferred_name";          // saved when connected
     private static final String KEY_RECONNECT_ARMED = "reconnect_armed";        // true after a session was established
-    private static final long[] RECONNECT_BACKOFF_MS = {2_000L, 5_000L, 10_000L, 20_000L, 40_000L, 60_000L};
+    private static final long RECONNECT_INITIAL_DELAY_MS = 2_000L;
+    private static final long RECONNECT_RETRY_DELAY_MS = 60_000L;
     private static final long RECONNECT_SCAN_WINDOW_MS = 15_000L;
     private static final long RECONNECT_CONNECT_TIMEOUT_MS = 45_000L;
 
@@ -879,8 +880,7 @@ public class WearTakBleClient {
         if (!reconnectActive) return;
         clearReconnectCallbacks();
         final int gen = ++reconnectGeneration;
-        int idx = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
-        long delay = RECONNECT_BACKOFF_MS[idx];
+        long delay = reconnectAttempt == 0 ? RECONNECT_INITIAL_DELAY_MS : RECONNECT_RETRY_DELAY_MS;
         reconnectAttempt++;
         logI("Auto-reconnect attempt #" + reconnectAttempt + " in " + delay + "ms (" + reason + ")");
         reconnectRunnable = () -> runReconnectAttempt(gen);
