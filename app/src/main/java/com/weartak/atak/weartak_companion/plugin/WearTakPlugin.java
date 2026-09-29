@@ -255,56 +255,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         if (bleClient == null) {
-            bleClient = new WearTakBleClient(pluginContext, connected -> {
-                mainHandler.post(() -> {
-                    if (connectionStatusTV != null) {
-                        connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
-                    }
-
-                    if (connected) {
-                        // Auto-reconnect may land on a device the UI did not select in this session
-                        // (e.g. after a plugin restart or a new advertising address).
-                        WearTakBleClient.DiscoveredDevice active =
-                                (bleClient != null) ? bleClient.getActiveDevice() : null;
-                        if (active != null && active.address != null
-                                && (selectedDevice == null || !active.address.equals(selectedDevice.address))) {
-                            String keepName = (selectedDevice != null) ? selectedDevice.name : null;
-                            selectedDevice = (active.name == null && keepName != null)
-                                    ? new WearTakBleClient.DiscoveredDevice(keepName, active.address, active.rssi)
-                                    : active;
-                            currentConnectedAddress = active.address;
-                        }
-                        // Persist preferred device for future sessions
-                        String addr = currentConnectedAddress;
-                        String nm = (selectedDevice != null) ? selectedDevice.name : null;
-                        if (addr != null && !addr.trim().isEmpty()) {
-                            savePreferredDevice(addr, nm);
-                        }
-                        // Show the card if we have a selected device (common path).
-                        if (selectedDevice != null) {
-                            currentConnectedAddress = selectedDevice.address;
-                            showConnectedCard(selectedDevice);
-                        }
-                    } else {
-                        hideConnectedCard();
-                        currentConnectedAddress = null;
-                    }
-
-                    if (deviceAdapter != null) {
-                        if (connected) {
-                            if (currentConnectedAddress != null) {
-                                deviceAdapter.setConnected(currentConnectedAddress);
-                            } else {
-                                deviceAdapter.notifyDataSetChanged();
-                            }
-                        } else {
-                            deviceAdapter.clearConnectionMarkers();
-                        }
-                    }
-
-                    refreshDeviceListUi();
-                });
-            });
+            bleClient = new WearTakBleClient(pluginContext,
+                    connected -> mainHandler.post(this::renderConnectionState));
         }
 
         if (bleCotBridge == null) {
@@ -420,7 +372,60 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     @Override
     public void onStop() {
-        if (bleClient != null) bleClient.stop();
+        // Drop the client so a stale pane from this instance cannot restart it after ATAK reloads the plugin.
+        WearTakBleClient client = bleClient;
+        bleClient = null;
+        if (client != null) {
+            client.setJsonListener(null);
+            client.stop();
+        }
+        if (uiService != null && templatePane != null && uiService.isPaneVisible(templatePane)) {
+            uiService.closePane(templatePane);
+        }
+    }
+
+    private void renderConnectionState() {
+        boolean connected = bleClient != null && bleClient.isConnected();
+        if (connectionStatusTV != null) {
+            connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
+        }
+
+        if (connected) {
+            WearTakBleClient.DiscoveredDevice active = bleClient.getActiveDevice();
+            if (active != null && active.address != null
+                    && (selectedDevice == null || !active.address.equals(selectedDevice.address))) {
+                String keepName = (selectedDevice != null) ? selectedDevice.name : null;
+                selectedDevice = (active.name == null && keepName != null)
+                        ? new WearTakBleClient.DiscoveredDevice(keepName, active.address, active.rssi)
+                        : active;
+                currentConnectedAddress = active.address;
+            }
+            String addr = currentConnectedAddress;
+            String nm = (selectedDevice != null) ? selectedDevice.name : null;
+            if (addr != null && !addr.trim().isEmpty()) {
+                savePreferredDevice(addr, nm);
+            }
+            if (selectedDevice != null) {
+                currentConnectedAddress = selectedDevice.address;
+                showConnectedCard(selectedDevice);
+            }
+        } else {
+            hideConnectedCard();
+            currentConnectedAddress = null;
+        }
+
+        if (deviceAdapter != null) {
+            if (connected) {
+                if (currentConnectedAddress != null) {
+                    deviceAdapter.setConnected(currentConnectedAddress);
+                } else {
+                    deviceAdapter.notifyDataSetChanged();
+                }
+            } else {
+                deviceAdapter.clearConnectionMarkers();
+            }
+        }
+        refreshDeviceListUi();
     }
 
     // ------------------ UI build / pane ------------------
@@ -606,6 +611,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // only reset when opening
             resetDeviceScreenOnOpen();
+            renderConnectionState();
             requestSettingsFromWatch("showPane");
         } else {
             uiService.closePane(templatePane);
@@ -613,6 +619,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void refreshDeviceListUi() {
+        if (deviceAdapter == null) return;
         // Create a copy so we don't mutate scannedDevices ordering if you care
         ArrayList<WearTakBleClient.DiscoveredDevice> copy = new ArrayList<>();
         for (WearTakBleClient.DiscoveredDevice d : scannedDevices) {
