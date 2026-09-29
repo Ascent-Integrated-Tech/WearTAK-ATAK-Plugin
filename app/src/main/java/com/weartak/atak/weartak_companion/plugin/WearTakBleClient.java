@@ -1244,6 +1244,18 @@ public class WearTakBleClient {
         }
 
         @Override
+        public void onServiceChanged(BluetoothGatt gatt) {
+            main.post(() -> {
+                synchronized (WearTakBleClient.this) {
+                    if (!started || gatt != bluetoothGatt) return;
+                    boolean eligible = connected || reconnectActive;
+                    resetSession("GATT services changed");
+                    handleUnexpectedDisconnect(eligible, "GATT services changed");
+                }
+            });
+        }
+
+        @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
             if (gatt != bluetoothGatt) return;
             mtuNegotiated = (status == BluetoothGatt.GATT_SUCCESS);
