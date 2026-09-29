@@ -68,7 +68,7 @@ public class WearTakBleClient {
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner scanner;
 
-    private BluetoothGatt bluetoothGatt;
+    private volatile BluetoothGatt bluetoothGatt;
     private BluetoothGattCharacteristic txNotifyChar; // A11B
     private BluetoothGattCharacteristic rxWriteChar;  // A11C
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
@@ -1221,15 +1221,9 @@ public class WearTakBleClient {
 
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (gatt != bluetoothGatt) return;
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 setConnected(true);
-                BluetoothDevice device = gatt.getDevice();
-                if (device != null && device.getAddress() != null) {
-                    savePreferredAddress(device.getAddress());
-                    DiscoveredDevice last = lastConnectDevice;
-                    boolean sameDevice = last != null && device.getAddress().equals(last.address);
-                    armReconnect(sameDevice ? last.name : null);
-                }
 
                 if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -1251,6 +1245,7 @@ public class WearTakBleClient {
 
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+            if (gatt != bluetoothGatt) return;
             mtuNegotiated = (status == BluetoothGatt.GATT_SUCCESS);
             if (mtuNegotiated) negotiatedMtu = mtu;
 
@@ -1265,6 +1260,7 @@ public class WearTakBleClient {
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (gatt != bluetoothGatt) return;
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failSecureSession("Service discovery failed: " + status, "service_discovery_failed_" + status);
                 return;
@@ -1318,10 +1314,18 @@ public class WearTakBleClient {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            if (gatt != bluetoothGatt) return;
             if (descriptor == null) return;
             if (!CCCD_UUID.equals(descriptor.getUuid())) return;
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothDevice device = gatt.getDevice();
+                if (device != null && device.getAddress() != null) {
+                    savePreferredAddress(device.getAddress());
+                    DiscoveredDevice last = lastConnectDevice;
+                    boolean sameDevice = last != null && device.getAddress().equals(last.address);
+                    armReconnect(sameDevice ? last.name : null);
+                }
                 onReconnectSessionReady();
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
@@ -1332,6 +1336,7 @@ public class WearTakBleClient {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            if (gatt != bluetoothGatt) return;
             if (characteristic == null) return;
             if (txNotifyChar == null) return;
             if (!characteristic.getUuid().equals(txNotifyChar.getUuid())) return;
@@ -1354,6 +1359,7 @@ public class WearTakBleClient {
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (gatt != bluetoothGatt) return;
             if (characteristic == null) return;
             if (rxWriteChar == null) return;
             if (!characteristic.getUuid().equals(rxWriteChar.getUuid())) return;
