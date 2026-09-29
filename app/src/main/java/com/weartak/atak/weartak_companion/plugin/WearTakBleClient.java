@@ -100,6 +100,22 @@ public class WearTakBleClient {
     private static final long RECONNECT_COOLDOWN_MS = 250;
     private long lastGattCloseMs = 0L;
 
+    // -------- opt-in auto-reconnect --------
+    private static final String KEY_AUTO_RECONNECT = "auto_reconnect_enabled"; // default OFF
+    private static final String KEY_PREFERRED_NAME = "preferred_name";          // saved when connected
+    private static final String KEY_RECONNECT_ARMED = "reconnect_armed";        // true after a session was established
+    private static final long[] RECONNECT_BACKOFF_MS = {2_000L, 5_000L, 10_000L, 20_000L, 40_000L, 60_000L};
+    private static final long RECONNECT_SCAN_WINDOW_MS = 15_000L;
+    private static final long RECONNECT_CONNECT_TIMEOUT_MS = 45_000L;
+
+    private volatile boolean reconnectActive = false;
+    private int reconnectAttempt = 0;
+    private int reconnectGeneration = 0;
+    private Runnable reconnectRunnable = null;
+    private Runnable reconnectWatchdog = null;
+    private volatile DiscoveredDevice lastConnectDevice = null;
+    private volatile boolean adapterReceiverRegistered = false;
+
     // -------- TX queue (chunked writes) --------
     private final Object txLock = new Object();
     private final Deque<byte[]> txQueue = new ArrayDeque<>();
@@ -143,7 +159,12 @@ public class WearTakBleClient {
 
     private void clearPreferredAddress() {
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        prefs.edit().remove(KEY_PREFERRED_ADDRESS).apply();
+        prefs.edit()
+                .remove(KEY_PREFERRED_ADDRESS)
+                .remove(KEY_PREFERRED_NAME)
+                .putBoolean(KEY_RECONNECT_ARMED, false)
+                .apply();
+        cancelReconnectLoop("preferred device cleared");
     }
 
     public String getPreferredAddress() {
@@ -188,12 +209,17 @@ public class WearTakBleClient {
     }
 
     private void failSecureSession(String msg, String reason) {
+        final boolean eligible = connected || reconnectActive;
         error(msg);
-        resetSessionAsync(reason);
+        main.post(() -> {
+            resetSession(reason);
+            handleUnexpectedDisconnect(eligible, reason);
+        });
     }
 
     private void handleTrustLoss(String address, String reason, String msg) {
         pendingBondDevice = null;
+        disarmReconnect("trust lost: " + reason);
         clearPreferredAddressIfMatches(address);
 
         JsonListener l = jsonListener.get();
@@ -229,6 +255,22 @@ public class WearTakBleClient {
         } catch (Throwable ignored) {
         }
         bondReceiverRegistered = false;
+    }
+
+    private void registerAdapterStateReceiver() {
+        if (appContext == null || adapterReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        appContext.registerReceiver(adapterStateReceiver, filter);
+        adapterReceiverRegistered = true;
+    }
+
+    private void unregisterAdapterStateReceiver() {
+        if (appContext == null || !adapterReceiverRegistered) return;
+        try {
+            appContext.unregisterReceiver(adapterStateReceiver);
+        } catch (Throwable ignored) {
+        }
+        adapterReceiverRegistered = false;
     }
 
     public static class DiscoveredDevice {
@@ -273,14 +315,23 @@ public class WearTakBleClient {
 
         scanner = bluetoothAdapter.getBluetoothLeScanner();
         registerBondReceiver();
+        registerAdapterStateReceiver();
         started = true;
         logI("start(): initialized (no auto-connect)");
+
+        // Opt-in only: resume reconnecting to the last watch if the previous session was
+        // lost unexpectedly (or ATAK was restarted while connected) and the user enabled it.
+        if (canAutoReconnect()) {
+            startReconnectLoop("start()");
+        }
     }
 
     public synchronized void stop() {
+        cancelReconnectLoop("stop()");
         stopScanInternal("stop()");
         closeGattInternal("stop()");
         unregisterBondReceiver();
+        unregisterAdapterStateReceiver();
         pendingBondDevice = null;
         pendingReplacementDevice = null;
         pendingBondRecoveryName = null;
@@ -293,6 +344,7 @@ public class WearTakBleClient {
 
     public synchronized void resetSession(String reason) {
         logI("resetSession(): " + reason);
+        cancelReconnectLoop("resetSession: " + reason);
         stopScanInternal("resetSession: " + reason);
         closeGattInternal("resetSession: " + reason);
 
@@ -310,6 +362,10 @@ public class WearTakBleClient {
     // -------------------- scanning --------------------
 
     public synchronized void scanForDevices(final ScanListener listener) {
+        scanForDevices(listener, Math.max(1, timeoutSeconds) * 1000L);
+    }
+
+    private synchronized void scanForDevices(final ScanListener listener, long timeoutMs) {
         if (!started) start();
 
         if (bluetoothAdapter == null) {
@@ -401,7 +457,7 @@ public class WearTakBleClient {
             List<DiscoveredDevice> out = stopScanInternal("scan timeout");
             if (listener != null) listener.onScanFinished(out);
         };
-        main.postDelayed(scanTimeoutRunnable, Math.max(1, timeoutSeconds) * 1000L);
+        main.postDelayed(scanTimeoutRunnable, Math.max(1000L, timeoutMs));
     }
 
     private synchronized void clearScanTimeout() {
@@ -704,12 +760,271 @@ public class WearTakBleClient {
             return;
         }
 
+        lastConnectDevice = device;
         bluetoothGatt = d.connectGatt(appContext, false, gattCallback);
     }
 
+    /** User-initiated disconnect: never triggers auto-reconnect. */
     public synchronized void disconnect() {
+        disarmReconnect("manual disconnect");
         closeGattInternal("disconnect()");
         setConnected(false);
+    }
+
+    // -------------------- opt-in auto-reconnect --------------------
+
+    private SharedPreferences prefs() {
+        Context ctx = (appContext != null) ? appContext : baseContext;
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    public boolean isAutoReconnectEnabled() {
+        return prefs().getBoolean(KEY_AUTO_RECONNECT, false);
+    }
+
+    public synchronized void setAutoReconnectEnabled(boolean enabled) {
+        prefs().edit().putBoolean(KEY_AUTO_RECONNECT, enabled).apply();
+        reconnectAttempt = 0;
+        logI("setAutoReconnectEnabled(): " + enabled);
+        if (!enabled) {
+            cancelReconnectLoop("auto-reconnect disabled");
+        } else {
+            resumeAutoReconnect("auto-reconnect enabled");
+        }
+    }
+
+    /** True while the plugin is waiting for / attempting an automatic reconnect. */
+    public boolean isAutoReconnecting() {
+        return reconnectActive;
+    }
+
+    /**
+     * Restart the reconnect loop if it is eligible (opt-in enabled, last session was lost
+     * unexpectedly, not currently connected or connecting). Safe to call at any time.
+     */
+    public synchronized void resumeAutoReconnect(String reason) {
+        if (reconnectActive || connected || bluetoothGatt != null || scanning) return;
+        if (pendingBondDevice != null || pendingReplacementDevice != null) return;
+        if (!canAutoReconnect()) return;
+        startReconnectLoop(reason);
+    }
+
+    /** Device currently connected (or being connected), if known. */
+    public DiscoveredDevice getActiveDevice() {
+        String address = currentGattAddress();
+        if (address == null) return null;
+        DiscoveredDevice last = lastConnectDevice;
+        if (last != null && address.equals(last.address)) return last;
+        return new DiscoveredDevice(null, address, 0);
+    }
+
+    private boolean isReconnectArmed() {
+        return prefs().getBoolean(KEY_RECONNECT_ARMED, false);
+    }
+
+    private void armReconnect(String name) {
+        SharedPreferences.Editor e = prefs().edit().putBoolean(KEY_RECONNECT_ARMED, true);
+        if (name != null && !name.trim().isEmpty()) {
+            e.putString(KEY_PREFERRED_NAME, name.trim());
+        }
+        e.apply();
+    }
+
+    private synchronized void disarmReconnect(String reason) {
+        prefs().edit().putBoolean(KEY_RECONNECT_ARMED, false).apply();
+        reconnectAttempt = 0;
+        cancelReconnectLoop(reason);
+    }
+
+    private DiscoveredDevice loadReconnectTarget() {
+        SharedPreferences p = prefs();
+        String address = p.getString(KEY_PREFERRED_ADDRESS, null);
+        String name = p.getString(KEY_PREFERRED_NAME, null);
+        if (address == null && normalizeWearTakName(name) == null) return null;
+        return new DiscoveredDevice(name, address, 0);
+    }
+
+    private boolean canAutoReconnect() {
+        if (!started) return false;
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) return false;
+        if (!isAutoReconnectEnabled() || !isReconnectArmed()) return false;
+        return loadReconnectTarget() != null;
+    }
+
+    /**
+     * Called after the link was lost without the user asking for it.
+     * @param eligible true if a session was established (or a reconnect loop was already running)
+     */
+    private synchronized void handleUnexpectedDisconnect(boolean eligible, String reason) {
+        if (!eligible) return;
+        if (!canAutoReconnect()) {
+            if (reconnectActive) cancelReconnectLoop("not eligible after " + reason);
+            return;
+        }
+        if (reconnectActive) {
+            scheduleNextReconnect(reason);
+        } else {
+            startReconnectLoop(reason);
+        }
+    }
+
+    private synchronized void startReconnectLoop(String reason) {
+        if (!canAutoReconnect()) return;
+        reconnectActive = true;
+        logI("Auto-reconnect started: " + reason);
+        scheduleNextReconnect(reason);
+    }
+
+    private synchronized void scheduleNextReconnect(String reason) {
+        if (!reconnectActive) return;
+        clearReconnectCallbacks();
+        final int gen = ++reconnectGeneration;
+        int idx = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
+        long delay = RECONNECT_BACKOFF_MS[idx];
+        reconnectAttempt++;
+        logI("Auto-reconnect attempt #" + reconnectAttempt + " in " + delay + "ms (" + reason + ")");
+        reconnectRunnable = () -> runReconnectAttempt(gen);
+        main.postDelayed(reconnectRunnable, delay);
+    }
+
+    private synchronized void cancelReconnectLoop(String reason) {
+        boolean wasActive = reconnectActive;
+        reconnectActive = false;
+        reconnectGeneration++;
+        clearReconnectCallbacks();
+        if (wasActive) logI("Auto-reconnect cancelled: " + reason);
+    }
+
+    private synchronized void clearReconnectCallbacks() {
+        if (reconnectRunnable != null) {
+            main.removeCallbacks(reconnectRunnable);
+            reconnectRunnable = null;
+        }
+        if (reconnectWatchdog != null) {
+            main.removeCallbacks(reconnectWatchdog);
+            reconnectWatchdog = null;
+        }
+    }
+
+    private synchronized void onReconnectSessionReady() {
+        reconnectAttempt = 0;
+        if (!reconnectActive) return;
+        reconnectActive = false;
+        reconnectGeneration++;
+        clearReconnectCallbacks();
+        logI("Auto-reconnect succeeded");
+    }
+
+    private synchronized void runReconnectAttempt(final int gen) {
+        if (gen != reconnectGeneration || !reconnectActive) return;
+        reconnectRunnable = null;
+
+        if (!canAutoReconnect()) {
+            cancelReconnectLoop("preconditions no longer met");
+            return;
+        }
+        if (connected || bluetoothGatt != null) {
+            // A connection is already up or in progress; its callbacks decide what happens next.
+            logI("Auto-reconnect attempt skipped: connection already active/in progress");
+            return;
+        }
+        if (scanning || pendingBondDevice != null || pendingReplacementDevice != null) {
+            scheduleNextReconnect("busy (scan/bond in progress)");
+            return;
+        }
+
+        final DiscoveredDevice target = loadReconnectTarget();
+        final String targetName = normalizeWearTakName(target.name);
+        final AtomicBoolean issued = new AtomicBoolean(false);
+        logI("Auto-reconnect scanning for " + target);
+
+        scanForDevices(new ScanListener() {
+            @Override
+            public void onDeviceFound(DiscoveredDevice device) {
+                if (gen != reconnectGeneration) return;
+                if (target.address == null || !target.address.equals(device.address)) return;
+                if (!issued.compareAndSet(false, true)) return;
+                stopScanInternal("auto-reconnect match found");
+                main.post(() -> connectForReconnect(gen, device));
+            }
+
+            @Override
+            public void onScanFinished(List<DiscoveredDevice> devices) {
+                if (gen != reconnectGeneration) return;
+                if (!issued.compareAndSet(false, true)) return;
+                DiscoveredDevice match = findReconnectMatch(devices, target, targetName);
+                if (match != null) {
+                    main.post(() -> connectForReconnect(gen, match));
+                } else {
+                    scheduleNextReconnect("watch not advertising");
+                }
+            }
+
+            @Override
+            public void onScanError(String msg) {
+                if (gen != reconnectGeneration) return;
+                if (!issued.compareAndSet(false, true)) return;
+                if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+                    cancelReconnectLoop("Bluetooth disabled");
+                    return;
+                }
+                scheduleNextReconnect("scan error: " + msg);
+            }
+        }, RECONNECT_SCAN_WINDOW_MS);
+    }
+
+    /** Exact address first; otherwise the strongest already-bonded device advertising the same WearTAK name. */
+    private DiscoveredDevice findReconnectMatch(List<DiscoveredDevice> devices, DiscoveredDevice target, String targetName) {
+        if (devices == null) return null;
+        for (DiscoveredDevice d : devices) {
+            if (target.address != null && target.address.equals(d.address)) return d;
+        }
+        DiscoveredDevice best = null;
+        for (DiscoveredDevice d : devices) {
+            if (!matchesNormalizedName(targetName, d)) continue;
+            BluetoothDevice remote;
+            try {
+                remote = bluetoothAdapter.getRemoteDevice(d.address);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            if (!isBonded(remote)) continue; // never start a new pairing from the background loop
+            if (best == null || d.rssi > best.rssi) best = d;
+        }
+        return best;
+    }
+
+    private synchronized void connectForReconnect(final int gen, DiscoveredDevice device) {
+        if (gen != reconnectGeneration || !reconnectActive) return;
+        if (connected || bluetoothGatt != null) return;
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+            cancelReconnectLoop("Bluetooth disabled");
+            return;
+        }
+
+        logI("Auto-reconnect connecting to " + device);
+        reconnectWatchdog = () -> {
+            synchronized (WearTakBleClient.this) {
+                if (gen != reconnectGeneration || !reconnectActive) return;
+                reconnectWatchdog = null;
+                logW("Auto-reconnect connect timed out for " + device.address);
+                closeGattInternal("auto-reconnect timeout");
+                setConnected(false);
+                scheduleNextReconnect("connect timeout");
+            }
+        };
+        main.postDelayed(reconnectWatchdog, RECONNECT_CONNECT_TIMEOUT_MS);
+
+        long now = android.os.SystemClock.uptimeMillis();
+        long dt = now - lastGattCloseMs;
+        long waitMs = (dt < RECONNECT_COOLDOWN_MS) ? (RECONNECT_COOLDOWN_MS - dt) : 0;
+        main.postDelayed(() -> {
+            synchronized (WearTakBleClient.this) {
+                if (gen != reconnectGeneration || !reconnectActive) return;
+                if (connected || bluetoothGatt != null) return;
+                connectGattNow(device);
+            }
+        }, waitMs);
     }
 
     // -------------------- NEW: outbound JSON write (chunked) --------------------
@@ -877,6 +1192,29 @@ public class WearTakBleClient {
         }
     };
 
+    private final BroadcastReceiver adapterStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || !BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction())) {
+                return;
+            }
+            int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+            if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                cancelReconnectLoop("Bluetooth disabled");
+            } else if (state == BluetoothAdapter.STATE_ON) {
+                synchronized (WearTakBleClient.this) {
+                    if (!started || bluetoothAdapter == null) return;
+                    scanner = bluetoothAdapter.getBluetoothLeScanner();
+                    if (!connected && bluetoothGatt != null && canAutoReconnect()) {
+                        // Stale handle from before the adapter cycled.
+                        closeGattInternal("Bluetooth restarted");
+                    }
+                    resumeAutoReconnect("Bluetooth enabled");
+                }
+            }
+        }
+    };
+
     // -------------------- GATT --------------------
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
@@ -888,6 +1226,9 @@ public class WearTakBleClient {
                 BluetoothDevice device = gatt.getDevice();
                 if (device != null && device.getAddress() != null) {
                     savePreferredAddress(device.getAddress());
+                    DiscoveredDevice last = lastConnectDevice;
+                    boolean sameDevice = last != null && device.getAddress().equals(last.address);
+                    armReconnect(sameDevice ? last.name : null);
                 }
 
                 if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
@@ -901,8 +1242,10 @@ public class WearTakBleClient {
             }
 
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                boolean eligible = connected || reconnectActive;
                 setConnected(false);
                 closeGattInternal("STATE_DISCONNECTED status=" + status);
+                handleUnexpectedDisconnect(eligible, "STATE_DISCONNECTED status=" + status);
             }
         }
 
@@ -979,6 +1322,7 @@ public class WearTakBleClient {
             if (!CCCD_UUID.equals(descriptor.getUuid())) return;
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                onReconnectSessionReady();
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
             } else {

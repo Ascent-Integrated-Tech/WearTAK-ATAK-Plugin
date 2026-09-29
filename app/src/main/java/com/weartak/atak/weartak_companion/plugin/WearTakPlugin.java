@@ -67,6 +67,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // Device screen
     private TextView connectionStatusTV;
+    private CheckBox autoReconnectCB;
     private Button scanButton;
     private RecyclerView deviceList;
     private TextView emptyState;
@@ -261,6 +262,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
 
                     if (connected) {
+                        // Auto-reconnect may land on a device the UI did not select in this session
+                        // (e.g. after a plugin restart or a new advertising address).
+                        WearTakBleClient.DiscoveredDevice active =
+                                (bleClient != null) ? bleClient.getActiveDevice() : null;
+                        if (active != null && active.address != null
+                                && (selectedDevice == null || !active.address.equals(selectedDevice.address))) {
+                            String keepName = (selectedDevice != null) ? selectedDevice.name : null;
+                            selectedDevice = (active.name == null && keepName != null)
+                                    ? new WearTakBleClient.DiscoveredDevice(keepName, active.address, active.rssi)
+                                    : active;
+                            currentConnectedAddress = active.address;
+                        }
                         // Persist preferred device for future sessions
                         String addr = currentConnectedAddress;
                         String nm = (selectedDevice != null) ? selectedDevice.name : null;
@@ -432,6 +445,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
+            autoReconnectCB = paneView.findViewById(R.id.autoReconnectCheckBox);
+            if (autoReconnectCB != null) {
+                autoReconnectCB.setChecked(bleClient != null && bleClient.isAutoReconnectEnabled());
+                autoReconnectCB.setOnClickListener(v -> {
+                    if (bleClient != null) bleClient.setAutoReconnectEnabled(autoReconnectCB.isChecked());
+                });
+            }
             scanButton = paneView.findViewById(R.id.scanButton);
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
@@ -461,6 +481,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             scanButton.setOnClickListener(v -> {
                 int sessionId = ++scanSessionCount;
+                boolean wasAutoReconnecting = bleClient != null && bleClient.isAutoReconnecting();
                 if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
 
                 scannedDevices.clear();
@@ -472,7 +493,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 if (emptyState != null) emptyState.setVisibility(View.GONE);
 
                 // scan text will update when scan finishes
-                scanForDevices(sessionId);
+                scanForDevices(sessionId, wasAutoReconnecting);
             });
 
             // settings screen
@@ -647,7 +668,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
     }
 
-    private void scanForDevices(final int sessionId) {
+    private void scanForDevices(final int sessionId, final boolean resumeAutoReconnect) {
         if (bleClient == null) return;
 
         bleClient.scanForDevices(new WearTakBleClient.ScanListener() {
@@ -668,6 +689,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (scanButton != null) {
                         scanButton.setText(SCAN_TEXT_REFRESH);
                     }
+                    if (resumeAutoReconnect && bleClient != null) {
+                        bleClient.resumeAutoReconnect("UI scan finished");
+                    }
                 });
             }
 
@@ -680,6 +704,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                     if (scanButton != null) {
                         scanButton.setText(SCAN_TEXT_REFRESH);
+                    }
+                    if (resumeAutoReconnect && bleClient != null) {
+                        bleClient.resumeAutoReconnect("UI scan error");
                     }
                 });
             }

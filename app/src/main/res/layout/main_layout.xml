@@ -32,6 +32,20 @@
             android:textColor="@android:color/white"
             android:layout_marginBottom="10dp" />
 
+        <CheckBox
+            android:id="@+id/autoReconnectCheckBox"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="false"
+            android:text="Reconnect automatically" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Try to reconnect when WearTAK closes, restarts, or disconnects unexpectedly"
+            android:textSize="12sp"
+            android:paddingBottom="8dp" />
+
         <Button
             android:id="@+id/scanButton"
             android:layout_width="match_parent"
