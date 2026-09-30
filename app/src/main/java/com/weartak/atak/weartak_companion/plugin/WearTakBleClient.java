@@ -1206,6 +1206,11 @@ public class WearTakBleClient {
 
     public synchronized boolean isConnected() { return connected; }
 
+    public boolean isBluetoothEnabled() {
+        BluetoothAdapter adapter = bluetoothAdapter;
+        return adapter != null && adapter.isEnabled();
+    }
+
     private final BroadcastReceiver bondStateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -1266,6 +1271,11 @@ public class WearTakBleClient {
                 return;
             }
             int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+            if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_ON) {
+                // Let the UI refresh its Bluetooth-off hint even if the connection state did not change.
+                StatusListener listener = statusListener;
+                if (listener != null) listener.onConnectionStatusChanged(connected);
+            }
             if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
                 cancelReconnectLoop("Bluetooth disabled");
             } else if (state == BluetoothAdapter.STATE_ON) {

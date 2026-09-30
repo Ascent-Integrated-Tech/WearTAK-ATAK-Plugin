@@ -387,7 +387,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void renderConnectionState() {
         boolean connected = bleClient != null && bleClient.isConnected();
         if (connectionStatusTV != null) {
-            connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
+            boolean bluetoothOff = bleClient != null && !bleClient.isBluetoothEnabled();
+            connectionStatusTV.setText(connected ? "CONNECTED"
+                    : bluetoothOff ? "DISCONNECTED - BLUETOOTH OFF" : "DISCONNECTED");
         }
 
         if (connected) {
