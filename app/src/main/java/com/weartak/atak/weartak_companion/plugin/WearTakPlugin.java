@@ -384,6 +384,37 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
     }
 
+    private void confirmScanWhileConnected() {
+        Context dialogContext = MapView.getMapView() != null ? MapView.getMapView().getContext() : null;
+        if (dialogContext == null) {
+            startUiScan();
+            return;
+        }
+        new android.app.AlertDialog.Builder(dialogContext)
+                .setTitle("Disconnect watch?")
+                .setMessage("Scanning will disconnect the currently connected watch.")
+                .setPositiveButton("Scan", (d, which) -> startUiScan())
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void startUiScan() {
+        int sessionId = ++scanSessionCount;
+        boolean wasAutoReconnecting = bleClient != null && bleClient.isAutoReconnecting();
+        if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
+
+        scannedDevices.clear();
+        if (deviceAdapter != null) {
+            deviceAdapter.setDevices(scannedDevices);
+            deviceAdapter.clearConnectionMarkers();
+        }
+
+        if (emptyState != null) emptyState.setVisibility(View.GONE);
+
+        // scan text will update when scan finishes
+        scanForDevices(sessionId, wasAutoReconnecting);
+    }
+
     private void renderConnectionState() {
         boolean connected = bleClient != null && bleClient.isConnected();
         if (connectionStatusTV != null) {
@@ -487,20 +518,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             deviceList.setAdapter(deviceAdapter);
 
             scanButton.setOnClickListener(v -> {
-                int sessionId = ++scanSessionCount;
-                boolean wasAutoReconnecting = bleClient != null && bleClient.isAutoReconnecting();
-                if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
-
-                scannedDevices.clear();
-                if (deviceAdapter != null) {
-                    deviceAdapter.setDevices(scannedDevices);
-                    deviceAdapter.clearConnectionMarkers();
+                if (bleClient != null && bleClient.isConnected()) {
+                    confirmScanWhileConnected();
+                } else {
+                    startUiScan();
                 }
-
-                if (emptyState != null) emptyState.setVisibility(View.GONE);
-
-                // scan text will update when scan finishes
-                scanForDevices(sessionId, wasAutoReconnecting);
             });
 
             // settings screen
