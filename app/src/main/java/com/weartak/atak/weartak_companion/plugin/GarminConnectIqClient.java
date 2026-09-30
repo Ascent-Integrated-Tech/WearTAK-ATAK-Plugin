@@ -29,6 +29,7 @@ public final class GarminConnectIqClient {
 
     public interface Listener {
         void onStatusChanged(String status);
+        void onConnectionChanged(boolean connected);
         void onMessageReceived(JSONObject envelope);
     }
 
@@ -105,6 +106,7 @@ public final class GarminConnectIqClient {
             synchronized (lock) {
                 initializing = false;
             }
+            publishConnectionState();
             publishStatus("Garmin Connect IQ failed to start: " + e.getMessage());
         }
     }
@@ -127,6 +129,7 @@ public final class GarminConnectIqClient {
                     initializing = false;
                     if (!started) return;
                 }
+                publishConnectionState();
                 publishStatus("Garmin Connect IQ unavailable: " + errorStatus);
             }
 
@@ -136,8 +139,12 @@ public final class GarminConnectIqClient {
                 synchronized (lock) {
                     sdkReady = false;
                     initializing = false;
+                    for (DeviceApp device : devices.values()) {
+                        device.connected = false;
+                    }
                     shouldNotify = started;
                 }
+                publishConnectionState();
                 if (shouldNotify) publishStatus("Garmin Connect IQ stopped.");
             }
         };
@@ -151,6 +158,8 @@ public final class GarminConnectIqClient {
             initializing = false;
             devices.clear();
         }
+        publishConnectionState();
+        publishStatus("Garmin Connect IQ is off.");
 
         try {
             connectIQ.unregisterAllForEvents();
@@ -187,6 +196,7 @@ public final class GarminConnectIqClient {
         }
 
         if (knownDevices == null || knownDevices.isEmpty()) {
+            publishConnectionState();
             publishStatus("No Garmin watches paired in Garmin Connect Mobile.");
             return;
         }
@@ -194,6 +204,7 @@ public final class GarminConnectIqClient {
         for (IQDevice device : knownDevices) {
             if (device != null) registerDevice(device);
         }
+        publishConnectionState();
         publishStatus("Found " + knownDevices.size()
                 + " Garmin device(s). " + WATCH_RELAY_INSTRUCTIONS);
     }
@@ -201,6 +212,15 @@ public final class GarminConnectIqClient {
     public String getStatus() {
         synchronized (lock) {
             return status;
+        }
+    }
+
+    public boolean isConnected() {
+        synchronized (lock) {
+            for (DeviceApp device : devices.values()) {
+                if (device.connected) return true;
+            }
+            return false;
         }
     }
 
@@ -270,6 +290,7 @@ public final class GarminConnectIqClient {
         try {
             connectIQ.registerForDeviceEvents(device, (changedDevice, newStatus) -> {
                 entry.connected = newStatus == IQDevice.IQDeviceStatus.CONNECTED;
+                publishConnectionState();
                 if (entry.connected) {
                     loadApplication(entry);
                     publishStatus("Garmin connected: " + changedDevice.getFriendlyName()
@@ -284,6 +305,7 @@ public final class GarminConnectIqClient {
             } catch (InvalidStateException | ServiceUnavailableException e) {
                 Log.w(TAG, "Unable to read Garmin device status", e);
             }
+            publishConnectionState();
             loadApplication(entry);
         } catch (InvalidStateException e) {
             synchronized (lock) {
@@ -352,6 +374,7 @@ public final class GarminConnectIqClient {
                         // A message from the watch proves the link is up even if no
                         // device status event has been delivered yet.
                         entry.connected = true;
+                        publishConnectionState();
                         for (Object item : messageData) {
                             if (item instanceof Map) {
                                 JSONObject envelope = toJsonObject((Map<?, ?>) item);
@@ -400,5 +423,18 @@ public final class GarminConnectIqClient {
             status = newStatus;
         }
         if (listener != null) listener.onStatusChanged(newStatus);
+    }
+
+    private void publishConnectionState() {
+        boolean connected = false;
+        synchronized (lock) {
+            for (DeviceApp device : devices.values()) {
+                if (device.connected) {
+                    connected = true;
+                    break;
+                }
+            }
+        }
+        if (listener != null) listener.onConnectionChanged(connected);
     }
 }

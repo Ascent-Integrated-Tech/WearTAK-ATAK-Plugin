@@ -72,6 +72,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // Device screen
     private TextView connectionStatusTV;
     private TextView garminConnectionStatusTV;
+    private TextView garminConnectionBadgeTV;
     private Button garminToggleButton;
     private Button scanButton;
     private RecyclerView deviceList;
@@ -434,11 +435,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             }
 
                             @Override
+                            public void onConnectionChanged(boolean connected) {
+                                mainHandler.post(() -> renderGarminConnection(connected));
+                            }
+
+                            @Override
                             public void onMessageReceived(JSONObject envelope) {
                                 mainHandler.post(() -> handleGarminMessage(envelope));
                             }
                         });
             }
+            mainHandler.post(this::renderGarminConnecting);
             garminClient.start();
         } else if (garminClient != null) {
             garminClient.stop();
@@ -450,10 +457,32 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         ? "Disable Garmin Connect IQ"
                         : "Enable Garmin Connect IQ");
             }
+            if (!enabled) {
+                renderGarminOff();
+            }
             if (!enabled && garminConnectionStatusTV != null) {
                 garminConnectionStatusTV.setText("Garmin Connect IQ is off.");
             }
         });
+    }
+
+    private void renderGarminConnection(boolean connected) {
+        if (garminConnectionBadgeTV == null) return;
+        garminConnectionBadgeTV.setText(connected ? "CONNECTED" : "NOT CONNECTED");
+        garminConnectionBadgeTV.setBackgroundResource(
+                connected ? R.drawable.bg_chip_success : R.drawable.bg_chip_warning);
+    }
+
+    private void renderGarminConnecting() {
+        if (garminConnectionBadgeTV == null) return;
+        garminConnectionBadgeTV.setText("CONNECTING");
+        garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_warning);
+    }
+
+    private void renderGarminOff() {
+        if (garminConnectionBadgeTV == null) return;
+        garminConnectionBadgeTV.setText("OFF");
+        garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_neutral);
     }
 
     private void handleGarminMessage(JSONObject envelope) {
@@ -510,10 +539,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
+            garminConnectionBadgeTV = paneView.findViewById(R.id.garminConnectionBadge);
             if (garminClient != null) {
                 garminConnectionStatusTV.setText(garminClient.getStatus());
+                if (garminEnabled) {
+                    renderGarminConnection(garminClient.isConnected());
+                } else {
+                    renderGarminOff();
+                }
             } else {
                 garminConnectionStatusTV.setText("Garmin Connect IQ is off.");
+                renderGarminOff();
             }
             garminToggleButton = paneView.findViewById(R.id.garminToggleButton);
             garminToggleButton.setText(garminEnabled
