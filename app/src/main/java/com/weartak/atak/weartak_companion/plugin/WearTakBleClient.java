@@ -1277,6 +1277,12 @@ public class WearTakBleClient {
                 if (listener != null) listener.onConnectionStatusChanged(connected);
             }
             if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                synchronized (WearTakBleClient.this) {
+                    // Android may not deliver a GATT disconnect when the adapter turns off; drop the session now.
+                    if (started && (connected || bluetoothGatt != null)) {
+                        resetSession("Bluetooth disabled");
+                    }
+                }
                 cancelReconnectLoop("Bluetooth disabled");
             } else if (state == BluetoothAdapter.STATE_ON) {
                 synchronized (WearTakBleClient.this) {
