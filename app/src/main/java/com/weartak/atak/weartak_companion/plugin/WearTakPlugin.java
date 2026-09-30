@@ -1242,7 +1242,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (pluginContext == null) return;
         if (address == null || address.trim().isEmpty()) return;
 
-        pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PluginPrefs.get(pluginContext, PREFS_NAME)
                 .edit()
                 .putString(KEY_PREF_ADDR, address.trim())
                 .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
@@ -1253,7 +1253,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void clearPreferredDevice(String address) {
         if (pluginContext == null) return;
 
-        SharedPreferences prefs = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(pluginContext, PREFS_NAME);
         String current = prefs.getString(KEY_PREF_ADDR, null);
         if (address != null) {
             if (current == null) return;
@@ -1270,7 +1270,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredAddress() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = PluginPrefs.get(pluginContext, PREFS_NAME)
                 .getString(KEY_PREF_ADDR, null);
         if (v == null) return null;
         v = v.trim();
@@ -1279,7 +1279,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredName() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = PluginPrefs.get(pluginContext, PREFS_NAME)
                 .getString(KEY_PREF_NAME, null);
         if (v == null) return null;
         v = v.trim();

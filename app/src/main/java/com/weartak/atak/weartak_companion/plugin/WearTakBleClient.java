@@ -162,12 +162,12 @@ public class WearTakBleClient {
     }
 
     private void savePreferredAddress(String addr) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         prefs.edit().putString(KEY_PREFERRED_ADDRESS, addr).apply();
     }
 
     private void clearPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         prefs.edit()
                 .remove(KEY_PREFERRED_ADDRESS)
                 .remove(KEY_PREFERRED_NAME)
@@ -177,7 +177,7 @@ public class WearTakBleClient {
     }
 
     public String getPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         return prefs.getString(KEY_PREFERRED_ADDRESS, null);
     }
 
@@ -784,7 +784,7 @@ public class WearTakBleClient {
 
     private SharedPreferences prefs() {
         Context ctx = (appContext != null) ? appContext : baseContext;
-        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return PluginPrefs.get(ctx, PREFS);
     }
 
     public boolean isAutoReconnectEnabled() {
@@ -1511,12 +1511,12 @@ public class WearTakBleClient {
     // -------------------- pairing storage --------------------
 
     public String getPairedUid() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         return prefs.getString(KEY_PAIRED_UID, null);
     }
 
     private void savePairedUid(String uid, String callsign) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         prefs.edit()
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)
@@ -1524,7 +1524,7 @@ public class WearTakBleClient {
     }
 
     private void clearPairedDeviceIdentity() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = prefs();
         prefs.edit()
                 .remove(KEY_PAIRED_UID)
                 .remove(KEY_PAIRED_CALLSIGN)
