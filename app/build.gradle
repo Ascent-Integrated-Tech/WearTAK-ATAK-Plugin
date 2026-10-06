@@ -35,12 +35,12 @@ buildscript {
     def urlKey = 'takrepo.url'
 
     ext.isDevKitEnabled = { ->
-        return getProperty(urlKey, null) != null
+        return getProperty(urlKey, getProperty('takrepo_url', null)) != null
     }
 
-    ext.takrepoUrl = getProperty(urlKey, 'https://localhost/')
-    ext.takrepoUser = getProperty('takrepo.user', 'invalid')
-    ext.takrepoPassword = getProperty('takrepo.password', 'invalid')
+    ext.takrepoUrl = getProperty(urlKey, getProperty('takrepo_url', 'https://localhost/'))
+    ext.takrepoUser = getProperty('takrepo.user', getProperty('takrepo_user', 'invalid'))
+    ext.takrepoPassword = getProperty('takrepo.password', getProperty('takrepo_password', 'invalid'))
     ext.takdevPlugin = getProperty('takdev.plugin', "${rootDir}/../../atak-gradle-takdev.jar")
 
     repositories {
@@ -138,17 +138,27 @@ android {
 
 
     signingConfigs {
+        def signingProperties = new Properties()
+        def signingFile = rootProject.file('signing.properties')
+        if (signingFile.isFile()) {
+            signingFile.withInputStream { signingProperties.load(it) }
+        }
+        def signingStoreFile = signingProperties.getProperty('storeFile', "${buildDir}/android_keystore")
+        def signingStorePassword = signingProperties.getProperty('storePassword', 'tnttnt')
+        def signingKeyAlias = signingProperties.getProperty('keyAlias', 'wintec_mapping')
+        def signingKeyPassword = signingProperties.getProperty('keyPassword', 'tnttnt')
+
         debug {
-            storeFile file("${buildDir}/android_keystore")
-            storePassword "tnttnt"
-            keyAlias "wintec_mapping"
-            keyPassword "tnttnt"
+            storeFile file(signingStoreFile)
+            storePassword signingStorePassword
+            keyAlias signingKeyAlias
+            keyPassword signingKeyPassword
         }
         release {
-            storeFile file("${buildDir}/android_keystore")
-            storePassword "tnttnt"
-            keyAlias "wintec_mapping"
-            keyPassword "tnttnt"
+            storeFile file(signingStoreFile)
+            storePassword signingStorePassword
+            keyAlias signingKeyAlias
+            keyPassword signingKeyPassword
         }
     }
 
