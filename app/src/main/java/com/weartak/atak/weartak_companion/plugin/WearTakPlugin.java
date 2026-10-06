@@ -56,6 +56,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private WearTakBleClient bleClient;
     private SystemBondedWatchConnection systemBondedConnection;
+    private boolean systemBondedEnabled;
+    private boolean bindingSystemBondedToggle;
+    private CheckBox systemBondedWatchToggle;
+    private TextView systemBondedWatchStatus;
     private BleCotBridge bleCotBridge;
 
     // ------------------ UI ROOT ------------------
@@ -119,6 +123,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private static final String KEY_PREF_ADDR = "preferred_device_address";
     private static final String KEY_PREF_NAME = "preferred_device_name";
     private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
+    private static final String KEY_SYSTEM_BONDED_ENABLED = "use_system_bonded_watch";
     private static final String NO_P12_SELECTED = "No certificate selected.";
     private static final String WATCH_P12_SELECTED = "Certificate loaded from watch sync.";
 
@@ -203,7 +208,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void onDisconnectClicked() {
         if (bleClient == null) return;
 
-        if (systemBondedConnection != null) systemBondedConnection.stop();
+        disableSystemBondedForManualUse();
         ++scanSessionCount;
         try {
             bleClient.disconnect();
@@ -215,7 +220,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void connectToDevice(WearTakBleClient.DiscoveredDevice device) {
         if (device == null || bleClient == null) return;
 
-        if (systemBondedConnection != null) systemBondedConnection.stop();
+        disableSystemBondedForManualUse();
         ++scanSessionCount;
         selectedDevice = device;
         bleClient.resetSession("UI connect " + device.address);
@@ -305,6 +310,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
 
                     refreshDeviceListUi();
+                    updateSystemBondedControl();
                 });
             });
         }
@@ -395,6 +401,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             public void onTrustLost(String deviceAddress, String reason) {
                 clearPreferredDevice(deviceAddress);
                 runOnMain(() -> {
+                    updateSystemBondedControl();
                     currentConnectedAddress = null;
                     hideConnectedCard();
                     if (connectionStatusTV != null) connectionStatusTV.setText("DISCONNECTED");
@@ -413,6 +420,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             public void onError(String msg) {
                 runOnMain(() -> {
                     if (systemBondedConnection != null) systemBondedConnection.onError(msg);
+                    updateSystemBondedControl();
                     if (connectionStatusTV != null && !bleClient.isConnected()) {
                         connectionStatusTV.setText(
                                 systemBondedConnection != null && systemBondedConnection.isActive()
@@ -435,6 +443,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         @Override public void cancel(Runnable action) { mainHandler.removeCallbacks(action); }
                     },
                     new SystemBondedWatchConnection.Transport() {
+                        @Override public WearTakBleClient.DiscoveredDevice knownBondedCandidate() {
+                            return bleClient.getKnownBondedCompanion();
+                        }
                         @Override public void find(WearTakBleClient.BondedCompanionListener listener) {
                             bleClient.findBondedCompanion(listener);
                         }
@@ -445,18 +456,69 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     },
                     new SystemBondedWatchConnection.Listener() {
                         @Override public void onStatus(String message) {
-                            if (connectionStatusTV != null) connectionStatusTV.setText(message);
+                            if (systemBondedWatchStatus != null) systemBondedWatchStatus.setText(message);
+                            if (connectionStatusTV != null && systemBondedEnabled) {
+                                connectionStatusTV.setText(message);
+                            }
+                            updateSystemBondedControl();
                         }
                         @Override public void onConnecting(WearTakBleClient.DiscoveredDevice device) {
                             selectedDevice = device;
                             currentConnectedAddress = device.address;
                             if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
                         }
+                        @Override public void onCandidate(WearTakBleClient.DiscoveredDevice device) {
+                            updateSystemBondedControl();
+                        }
                     });
         }
-        // Standalone Samsung test branch defaults to this route. A future selector owns
-        // start()/stop() instead; manual scan/connect/disconnect stop it for this lifecycle.
-        systemBondedConnection.start();
+        systemBondedEnabled = systemBondedPreferences().getBoolean(KEY_SYSTEM_BONDED_ENABLED, false);
+        // Later replace this Samsung-only opt-in with selector-owned start()/stop().
+        if (systemBondedEnabled) systemBondedConnection.start();
+        else systemBondedConnection.observe();
+        updateSystemBondedControl();
+    }
+
+    private SharedPreferences systemBondedPreferences() {
+        MapView mapView = MapView.getMapView();
+        Context context = mapView != null ? mapView.getContext() : pluginContext;
+        Context application = context.getApplicationContext();
+        return (application != null ? application : context)
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private void setSystemBondedEnabled(boolean enabled) {
+        systemBondedEnabled = enabled;
+        systemBondedPreferences().edit().putBoolean(KEY_SYSTEM_BONDED_ENABLED, enabled).apply();
+        ++scanSessionCount;
+        systemBondedConnection.stop();
+        // Switching use owns only this plugin's BLE session; never the Android bond.
+        bleClient.resetSession("system bonded toggle");
+        if (enabled) systemBondedConnection.start();
+        else systemBondedConnection.observe();
+        updateSystemBondedControl();
+    }
+
+    private void disableSystemBondedForManualUse() {
+        systemBondedEnabled = false;
+        systemBondedPreferences().edit().putBoolean(KEY_SYSTEM_BONDED_ENABLED, false).apply();
+        if (systemBondedConnection != null) systemBondedConnection.stop();
+        updateSystemBondedControl();
+    }
+
+    private void updateSystemBondedControl() {
+        if (systemBondedWatchToggle == null || systemBondedConnection == null) return;
+        WearTakBleClient.DiscoveredDevice candidate = bleClient.getKnownBondedCompanion();
+        bindingSystemBondedToggle = true;
+        systemBondedWatchToggle.setChecked(systemBondedEnabled);
+        // Checked must always be turn-off-able, including unavailable/offline/permission loss.
+        systemBondedWatchToggle.setEnabled(systemBondedEnabled || candidate != null);
+        bindingSystemBondedToggle = false;
+        if (systemBondedWatchStatus != null) {
+            systemBondedWatchStatus.setText(systemBondedConnection.getStatus()
+                    + (candidate != null ? "\nBonded candidate: " + candidate.toString()
+                    : "\nNo verified compatible bond available; enable Bluetooth/Nearby Devices and run WearTAK to identify one."));
+        }
     }
 
     private void runOnMain(Runnable action) {
@@ -498,6 +560,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             scanButton = paneView.findViewById(R.id.scanButton);
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
+            systemBondedWatchToggle = paneView.findViewById(R.id.systemBondedWatchToggle);
+            systemBondedWatchStatus = paneView.findViewById(R.id.systemBondedWatchStatus);
+            updateSystemBondedControl();
+            systemBondedWatchToggle.setOnCheckedChangeListener((button, checked) -> {
+                if (!bindingSystemBondedToggle) setSystemBondedEnabled(checked);
+            });
 
             deviceList.setLayoutManager(new LinearLayoutManager(pluginContext));
             deviceAdapter = new BleDeviceAdapter(new BleDeviceAdapter.Listener() {
@@ -524,7 +592,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             deviceList.setAdapter(deviceAdapter);
 
             scanButton.setOnClickListener(v -> {
-                if (systemBondedConnection != null) systemBondedConnection.stop();
+                disableSystemBondedForManualUse();
                 int sessionId = ++scanSessionCount;
                 if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
 
@@ -706,8 +774,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (connectionStatusTV != null) {
             connectionStatusTV.setText(bleClient != null && bleClient.isConnected()
                     ? "CONNECTED (READY)"
-                    : systemBondedConnection != null ? systemBondedConnection.getStatus() : "DISCONNECTED");
+                    : systemBondedConnection != null && systemBondedEnabled
+                    ? systemBondedConnection.getStatus() : "DISCONNECTED");
         }
+        updateSystemBondedControl();
 
         // Connected card: show only if we have a selectedDevice from this session
         if (bleClient != null && bleClient.isConnected()

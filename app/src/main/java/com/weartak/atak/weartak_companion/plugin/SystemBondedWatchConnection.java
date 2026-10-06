@@ -12,6 +12,7 @@ public final class SystemBondedWatchConnection {
     }
 
     public interface Transport {
+        WearTakBleClient.DiscoveredDevice knownBondedCandidate();
         void find(WearTakBleClient.BondedCompanionListener listener);
         void connect(WearTakBleClient.DiscoveredDevice device);
         void reset();
@@ -20,12 +21,15 @@ public final class SystemBondedWatchConnection {
     public interface Listener {
         void onStatus(String message);
         void onConnecting(WearTakBleClient.DiscoveredDevice device);
+        void onCandidate(WearTakBleClient.DiscoveredDevice device);
     }
 
     private final Scheduler scheduler;
     private final Transport transport;
     private final Listener listener;
     private boolean active;
+    private boolean running;
+    private WearTakBleClient.DiscoveredDevice candidate;
     private boolean attempting;
     private boolean connecting;
     private boolean ready;
@@ -44,7 +48,19 @@ public final class SystemBondedWatchConnection {
     public void start() {
         scheduler.execute(() -> {
             if (active) return;
+            if (running) stopInternal();
+            running = true;
             active = true;
+            retryDelay = 2000;
+            attempt();
+        });
+    }
+
+    /** Identifies bonded candidates without connecting. Separate from transport activation. */
+    public void observe() {
+        scheduler.execute(() -> {
+            if (running) return;
+            running = true;
             retryDelay = 2000;
             attempt();
         });
@@ -52,14 +68,17 @@ public final class SystemBondedWatchConnection {
 
     /** Stops discovery, GATT setup, and retries, including already queued callbacks. */
     public void stop() {
-        scheduler.execute(() -> {
-            active = false;
-            ++generation;
-            cancelTimers();
-            attempting = connecting = ready = false;
-            transport.reset();
-            updateStatus("Automatic bonded-watch connection stopped; use Scan for manual BLE");
-        });
+        scheduler.execute(this::stopInternal);
+    }
+
+    private void stopInternal() {
+        boolean wasRunning = running;
+        active = running = false;
+        ++generation;
+        cancelTimers();
+        attempting = connecting = ready = false;
+        if (wasRunning) transport.reset();
+        updateStatus("System-bonded connection/discovery stopped");
     }
 
     public void onConnectionChanged(boolean connected) {
@@ -80,31 +99,35 @@ public final class SystemBondedWatchConnection {
 
     public void onError(String message) {
         scheduler.execute(() -> {
-            if (active && (attempting || ready)) failed(message);
+            if (running && (attempting || ready)) failed(message);
         });
     }
 
     public String getStatus() { return status; }
     public boolean isActive() { return active; }
+    public WearTakBleClient.DiscoveredDevice getCandidate() { return candidate; }
 
     private void attempt() {
-        if (!active) return;
+        if (!running) return;
         retry = null;
         final long token = ++generation;
         attempting = true;
         connecting = ready = false;
-        updateStatus("Finding existing system-bonded WearTAK watch...");
+        candidate = transport.knownBondedCandidate();
+        listener.onCandidate(candidate);
+        if (!active && candidate != null) {
+            identified(token, candidate);
+            return;
+        }
+        updateStatus(active ? "Finding existing system-bonded WearTAK watch..."
+                : "Use disabled; checking for a compatible system-bonded WearTAK watch...");
         armTimeout(token, 35000, "Bonded watch discovery timed out");
         transport.find(new WearTakBleClient.BondedCompanionListener() {
             @Override
             public void onFound(WearTakBleClient.DiscoveredDevice device) {
                 scheduler.execute(() -> {
                     if (!current(token) || !attempting || connecting) return;
-                    connecting = true;
-                    updateStatus("Connecting bonded WearTAK watch...");
-                    listener.onConnecting(device);
-                    armTimeout(token, 25000, "BLE setup timed out before transport ready");
-                    transport.connect(device);
+                    identified(token, device);
                 });
             }
 
@@ -117,7 +140,28 @@ public final class SystemBondedWatchConnection {
         });
     }
 
-    private boolean current(long token) { return active && token == generation; }
+    private void identified(long token, WearTakBleClient.DiscoveredDevice device) {
+        candidate = device;
+        listener.onCandidate(candidate);
+        if (!active) {
+            attempting = false;
+            cancelTimers();
+            retryDelay = 2000;
+            updateStatus("Use disabled; compatible system-bonded watch identified (reachability not verified)");
+            retry = () -> {
+                if (current(token)) attempt();
+            };
+            scheduler.later(retry, 60000);
+            return;
+        }
+        connecting = true;
+        updateStatus("Connecting bonded WearTAK watch...");
+        listener.onConnecting(device);
+        armTimeout(token, 25000, "BLE setup timed out before transport ready");
+        transport.connect(device);
+    }
+
+    private boolean current(long token) { return running && token == generation; }
 
     private void armTimeout(long token, long delay, String reason) {
         if (timeout != null) scheduler.cancel(timeout);
@@ -132,10 +176,14 @@ public final class SystemBondedWatchConnection {
         cancelTimers();
         attempting = connecting = ready = false;
         transport.reset();
-        if (!active) return;
+        if (!running) return;
+        candidate = transport.knownBondedCandidate();
+        listener.onCandidate(candidate);
         long delay = retryDelay;
         retryDelay = Math.min(60000, retryDelay * 2);
-        updateStatus(reason + "; retry in " + (delay / 1000) + "s");
+        updateStatus((active ? "" : "Use disabled; ")
+                + (candidate != null ? "Bonded watch identified; disconnected. " : "Candidate unavailable. ")
+                + reason + "; retry in " + (delay / 1000) + "s");
         retry = () -> {
             if (current(token)) attempt();
         };

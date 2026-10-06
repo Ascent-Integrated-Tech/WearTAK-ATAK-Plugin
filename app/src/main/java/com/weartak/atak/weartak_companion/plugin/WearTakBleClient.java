@@ -503,6 +503,28 @@ public class WearTakBleClient {
         });
     }
 
+    /**
+     * Previously A11A-identified bond, independent of reachability. Android may report
+     * BOND_NONE with its Bluetooth service powered off; retain the last confirmed bond
+     * until the radio can verify it again (or an explicit bond-loss broadcast arrives).
+     */
+    public synchronized DiscoveredDevice getKnownBondedCompanion() {
+        if (!started) start();
+        if (bluetoothAdapter == null || !hasConnectPermission()) return null;
+        String address = getPreferredAddress();
+        if (address == null) return null;
+        try {
+            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
+            if (!bluetoothAdapter.isEnabled() || device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                return new DiscoveredDevice(safeGetDeviceName(device), address, 0);
+            }
+            clearPreferredAddressIfMatches(address);
+        } catch (IllegalArgumentException | SecurityException e) {
+            logW("Unable to check known bonded WearTAK candidate");
+        }
+        return null;
+    }
+
     private boolean isBondedAddress(String address) {
         try {
             return bluetoothAdapter != null && isBonded(bluetoothAdapter.getRemoteDevice(address));
