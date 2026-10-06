@@ -55,6 +55,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile Boolean lastSettingsApplyResult = null;
 
     private WearTakBleClient bleClient;
+    private SystemBondedWatchConnection systemBondedConnection;
     private BleCotBridge bleCotBridge;
 
     // ------------------ UI ROOT ------------------
@@ -177,6 +178,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             action.setText("Settings");
             action.setEnabled(true);
             action.setOnClickListener(v -> {
+                if (bleClient == null || !bleClient.isConnected()) return;
                 selectedDevice = d;
                 showSettingsScreen();
                 requestSettingsFromWatch("connectedCardSettings");
@@ -201,6 +203,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void onDisconnectClicked() {
         if (bleClient == null) return;
 
+        if (systemBondedConnection != null) systemBondedConnection.stop();
+        ++scanSessionCount;
         try {
             bleClient.disconnect();
         } catch (Throwable t) {
@@ -211,12 +215,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void connectToDevice(WearTakBleClient.DiscoveredDevice device) {
         if (device == null || bleClient == null) return;
 
+        if (systemBondedConnection != null) systemBondedConnection.stop();
+        ++scanSessionCount;
         selectedDevice = device;
-        currentConnectedAddress = device.address;
         bleClient.resetSession("UI connect " + device.address);
+        currentConnectedAddress = device.address;
         bleClient.connectToSelectedDevice(device);
 
         if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
+        if (connectionStatusTV != null) connectionStatusTV.setText("Connecting WearTAK watch...");
     }
 
     // ------------------ Plugin lifecycle ------------------
@@ -236,6 +243,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     @SuppressLint("NotifyDataSetChanged")
     @Override
     public void onStart() {
+        if (Looper.myLooper() != mainHandler.getLooper()) {
+            mainHandler.post(this::onStart);
+            return;
+        }
         this.serviceController.registerComponent(IToolbarItem.class, this);
 
         if (pluginContext == null && serviceController != null) {
@@ -255,9 +266,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         if (bleClient == null) {
             bleClient = new WearTakBleClient(pluginContext, connected -> {
-                mainHandler.post(() -> {
+                runOnMain(() -> {
+                    if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
                     if (connectionStatusTV != null) {
-                        connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
+                        connectionStatusTV.setText(connected ? "CONNECTED"
+                                : systemBondedConnection != null && systemBondedConnection.isActive()
+                                ? systemBondedConnection.getStatus() : "DISCONNECTED");
                     }
 
                     if (connected) {
@@ -274,6 +288,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         }
                     } else {
                         hideConnectedCard();
+                        showDeviceScreen();
                         currentConnectedAddress = null;
                     }
 
@@ -305,7 +320,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onReady() {
                 Log.i(TAG, "BLE READY");
-                mainHandler.post(() -> {
+                runOnMain(() -> {
+                    if (!bleClient.isConnected()) return;
                     if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
                     requestSettingsFromWatch("onReady");
                 });
@@ -378,7 +394,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onTrustLost(String deviceAddress, String reason) {
                 clearPreferredDevice(deviceAddress);
-                mainHandler.post(() -> {
+                runOnMain(() -> {
                     currentConnectedAddress = null;
                     hideConnectedCard();
                     if (connectionStatusTV != null) connectionStatusTV.setText("DISCONNECTED");
@@ -395,7 +411,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             @Override
             public void onError(String msg) {
-                mainHandler.post(() -> {
+                runOnMain(() -> {
+                    if (systemBondedConnection != null) systemBondedConnection.onError(msg);
+                    if (connectionStatusTV != null && !bleClient.isConnected()) {
+                        connectionStatusTV.setText(
+                                systemBondedConnection != null && systemBondedConnection.isActive()
+                                        ? systemBondedConnection.getStatus() : "BLE: " + msg);
+                    }
                     if (settingsStatusTV != null && settingsScreenRoot != null
                             && settingsScreenRoot.getVisibility() == View.VISIBLE) {
                         settingsStatusTV.setText("BLE error: " + msg);
@@ -403,11 +425,52 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
         });
+        if (systemBondedConnection == null) {
+            systemBondedConnection = new SystemBondedWatchConnection(
+                    new SystemBondedWatchConnection.Scheduler() {
+                        @Override public void execute(Runnable action) { runOnMain(action); }
+                        @Override public void later(Runnable action, long delayMs) {
+                            mainHandler.postDelayed(action, delayMs);
+                        }
+                        @Override public void cancel(Runnable action) { mainHandler.removeCallbacks(action); }
+                    },
+                    new SystemBondedWatchConnection.Transport() {
+                        @Override public void find(WearTakBleClient.BondedCompanionListener listener) {
+                            bleClient.findBondedCompanion(listener);
+                        }
+                        @Override public void connect(WearTakBleClient.DiscoveredDevice device) {
+                            bleClient.connectToSelectedDevice(device, false);
+                        }
+                        @Override public void reset() { bleClient.resetSession("system bonded activation"); }
+                    },
+                    new SystemBondedWatchConnection.Listener() {
+                        @Override public void onStatus(String message) {
+                            if (connectionStatusTV != null) connectionStatusTV.setText(message);
+                        }
+                        @Override public void onConnecting(WearTakBleClient.DiscoveredDevice device) {
+                            selectedDevice = device;
+                            currentConnectedAddress = device.address;
+                            if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
+                        }
+                    });
+        }
+        // Standalone Samsung test branch defaults to this route. A future selector owns
+        // start()/stop() instead; manual scan/connect/disconnect stop it for this lifecycle.
+        systemBondedConnection.start();
+    }
+
+    private void runOnMain(Runnable action) {
+        if (Looper.myLooper() == mainHandler.getLooper()) action.run();
+        else mainHandler.post(action);
     }
 
     @Override
     public void onStop() {
-        if (bleClient != null) bleClient.stop();
+        runOnMain(() -> {
+            ++scanSessionCount;
+            if (systemBondedConnection != null) systemBondedConnection.stop();
+            if (bleClient != null) bleClient.stop();
+        });
     }
 
     // ------------------ UI build / pane ------------------
@@ -445,6 +508,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
                 @Override
                 public void onSettingsClicked(WearTakBleClient.DiscoveredDevice device) {
+                    if (bleClient == null || !bleClient.isConnected()) return;
                     selectedDevice = device;
                     showSettingsScreen();
                     requestSettingsFromWatch("settingsClicked");
@@ -460,6 +524,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             deviceList.setAdapter(deviceAdapter);
 
             scanButton.setOnClickListener(v -> {
+                if (systemBondedConnection != null) systemBondedConnection.stop();
                 int sessionId = ++scanSessionCount;
                 if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
 
@@ -592,6 +657,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void refreshDeviceListUi() {
+        if (deviceAdapter == null) return;
         // Create a copy so we don't mutate scannedDevices ordering if you care
         ArrayList<WearTakBleClient.DiscoveredDevice> copy = new ArrayList<>();
         for (WearTakBleClient.DiscoveredDevice d : scannedDevices) {
@@ -637,9 +703,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         if (scanButton != null) scanButton.setText(SCAN_TEXT_DEFAULT);
+        if (connectionStatusTV != null) {
+            connectionStatusTV.setText(bleClient != null && bleClient.isConnected()
+                    ? "CONNECTED (READY)"
+                    : systemBondedConnection != null ? systemBondedConnection.getStatus() : "DISCONNECTED");
+        }
 
         // Connected card: show only if we have a selectedDevice from this session
-        if (selectedDevice != null && currentConnectedAddress != null
+        if (bleClient != null && bleClient.isConnected()
+                && selectedDevice != null && currentConnectedAddress != null
                 && currentConnectedAddress.equals(selectedDevice.address)) {
             showConnectedCard(selectedDevice);
         } else {
@@ -654,6 +726,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onDeviceFound(WearTakBleClient.DiscoveredDevice device) {
                 mainHandler.post(() -> {
+                    if (sessionId != scanSessionCount) return;
                     upsertDevice(device);
                     refreshDeviceListUi();
                 });
@@ -662,6 +735,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
                 mainHandler.post(() -> {
+                    if (sessionId != scanSessionCount) return;
                     if (emptyState != null) {
                         emptyState.setVisibility(scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
                     }
@@ -674,6 +748,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onScanError(String msg) {
                 mainHandler.post(() -> {
+                    if (sessionId != scanSessionCount) return;
                     if (emptyState != null) {
                         emptyState.setText("Scan error: " + msg);
                         emptyState.setVisibility(View.VISIBLE);
@@ -697,7 +772,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: request / parse / apply ----------
     private void requestSettingsFromWatch(String reason) {
-        if (bleClient == null) return;
+        if (bleClient == null || !bleClient.isConnected()) return;
         lastSettingsApplyResult = null;
         String req = "{\"msg_type\":\"request_settings\"}";
         boolean ok = bleClient.writeJsonLineToWatch(req);
@@ -788,7 +863,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: send back to watch ----------
     private void sendSettingsToWatch() {
-        if (bleClient == null) return;
+        if (bleClient == null || !bleClient.isConnected()) return;
 
         JSONObject root = new JSONObject();
         JSONObject payload = new JSONObject();
@@ -917,6 +992,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // ---------- screen nav ----------
 
     private void showSettingsScreen() {
+        if (bleClient == null || !bleClient.isConnected()) return;
 //        if (settingsDeviceSubtitle != null) {
 //            String label = (selectedDevice != null)
 //                    ? ((selectedDevice.name == null ? "WearTAK" : selectedDevice.name) + " • " + selectedDevice.address)
