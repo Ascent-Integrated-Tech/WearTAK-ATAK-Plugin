@@ -21,6 +21,17 @@ public class SystemBondedWatchConnectionTest {
         @Override public void onCandidate(WearTakBleClient.DiscoveredDevice device) { }
     });
 
+    @Test public void describesBondedWatchWithAliasModelAndAddress() {
+        assertEquals("ODIN-WEARTAK\nModel: Galaxy Watch Ultra2 (RK2Z)\nAddress: 8C:A3:EC:B6:DD:F5",
+                SystemBondedWatchConnection.describeBondedWatch(
+                        "ODIN-WEARTAK", "Galaxy Watch Ultra2 (RK2Z)", "8C:A3:EC:B6:DD:F5"));
+        assertEquals("Galaxy Watch Ultra2 (RK2Z)\nAddress: 8C:A3:EC:B6:DD:F5",
+                SystemBondedWatchConnection.describeBondedWatch(
+                        null, "Galaxy Watch Ultra2 (RK2Z)", "8C:A3:EC:B6:DD:F5"));
+        assertEquals("ODIN-WEARTAK\nAddress: 8C:A3:EC:B6:DD:F5",
+                SystemBondedWatchConnection.describeBondedWatch("ODIN-WEARTAK", "ODIN-WEARTAK", "8C:A3:EC:B6:DD:F5"));
+    }
+
     @Test public void startsOnceAndWaitsForTransportReadiness() {
         controller.start();
         controller.start();

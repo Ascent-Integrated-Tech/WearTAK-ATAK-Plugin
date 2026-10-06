@@ -39,6 +39,16 @@ public final class SystemBondedWatchConnection {
     private Runnable timeout;
     private String status = "Automatic bonded-watch connection stopped";
 
+    /** Formats the user-assigned watch name, Android device/model name, and address. */
+    public static String describeBondedWatch(String alias, String model, String address) {
+        String a = alias != null ? alias.trim() : "";
+        String m = model != null ? model.trim() : "";
+        StringBuilder out = new StringBuilder(a.isEmpty() ? (m.isEmpty() ? "Unknown" : m) : a);
+        if (!a.isEmpty() && !m.isEmpty() && !m.equals(a)) out.append("\nModel: ").append(m);
+        out.append("\nAddress: ").append(address != null && !address.isEmpty() ? address : "—");
+        return out.toString();
+    }
+
     public SystemBondedWatchConnection(Scheduler scheduler, Transport transport, Listener listener) {
         this.scheduler = scheduler;
         this.transport = transport;

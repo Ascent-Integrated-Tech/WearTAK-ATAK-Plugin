@@ -516,7 +516,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bindingSystemBondedToggle = false;
         if (systemBondedWatchStatus != null) {
             systemBondedWatchStatus.setText(systemBondedConnection.getStatus()
-                    + (candidate != null ? "\nBonded candidate: " + candidate.toString()
+                    + (candidate != null ? "\nBonded candidate: " + bleClient.describeBondedWatch(candidate.address)
                     : "\nNo verified compatible bond available; enable Bluetooth/Nearby Devices and run WearTAK to identify one."));
         }
     }

@@ -45,12 +45,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/system_bonded_watch_checking"
-            android:paddingBottom="4dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/system_bonded_watch_explanation"
             android:paddingBottom="8dp" />
 
         <Button

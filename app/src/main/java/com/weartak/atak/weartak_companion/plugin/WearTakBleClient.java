@@ -1270,6 +1270,30 @@ public class WearTakBleClient {
         return null;
     }
 
+    private String safeGetDeviceAlias(BluetoothDevice d) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null;
+        try {
+            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) return null;
+            return d.getAlias();
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /** User-assigned name, Android device/model name, and address for a bonded watch. */
+    public synchronized String describeBondedWatch(String address) {
+        String alias = null;
+        String model = null;
+        if (bluetoothAdapter != null && address != null) {
+            try {
+                BluetoothDevice d = bluetoothAdapter.getRemoteDevice(address);
+                alias = safeGetDeviceAlias(d);
+                model = safeGetDeviceName(d);
+            } catch (IllegalArgumentException ignored) {}
+        }
+        return SystemBondedWatchConnection.describeBondedWatch(alias, model, address);
+    }
+
     private String normalizeWearTakName(String value) {
         if (value == null) return null;
         String trimmed = value.trim();
