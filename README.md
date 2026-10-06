@@ -56,6 +56,35 @@ EQUIPMENT SUPPORTED
 _________________________________________________________________
 COMPILATION
 
+This branch targets ATAK 5.8.0 (plugin-api com.atakmap.app@5.8.0.CIV for
+the CIV variant). Use JDK 17 to run Gradle 8.14.3 with Android Gradle Plugin
+8.13.2, Android SDK platform 36, compile/target SDK 36, and minimum SDK 23.
+Java source and bytecode compatibility remain Java 8.
+
+TPP should configure its authenticated takrepo.url/user/password in
+local.properties or Gradle properties. The repository resolves takdev 3.+;
+an offline/local takdev.plugin JAR must be version 3.5.3 or newer and paired
+with the ATAK 5.8 SDK. Do not use a 5.5/5.6 SDK to validate 5.8 compatibility.
+This plugin has no native sources, so no NDK installation is required;
+if native compilation is added, ATAK 5.8 requires NDK 27.3.13750724.
+ATAK-provided core AndroidX libraries remain excluded from implementation;
+dependency alignment follows ATAK 5.8 (core 1.17.0 except core-viewtree,
+lifecycle 2.10.0, fragment 1.8.9).
+
+Run gradlew.bat :app:testCivDebugUnitTest :app:assembleCivDebug, then
+gradlew.bat :app:lintCivRelease :app:assembleCivRelease for release validation.
+An archive is source only, not a verified APK or TPP-signed package.
+ATAK 5.8 API/build and phone behavior require the matching SDK/repository
+and device testing; local tests against an older SDK do not establish them.
+
+Local migration validation used JDK 17 and SDK 36: Java 8 compilation,
+21 targeted unit tests, and CIV release lint passed with ATAK 5.5.1 SDK
+stubs supplied only through an uncommitted validation init script.
+The normal 5.8 debug/release build could not resolve ATAK API dependencies
+without an authenticated TAK repository or 5.8 SDK. Release packaging
+with the older stubs also stopped at the missing atak.proguard.mapping
+property. This source archive is therefore not build-verified on ATAK 5.8.
+
 _________________________________________________________________
 DEVELOPER NOTES
 
@@ -120,7 +149,8 @@ system-pairing watch version (wearos-tak-civ-samsung-system-pairing,
 commit 9a90f83 or its successors). A TPP-signed Companion plugin cannot
 update or replace the watch app. The Companion source ZIP is for TPP
 build/signing and testing, not certification or a directly installable APK.
-Build configuration intentionally retains ATAK target 5.5.1; behavior on
-the requested ATAK 5.8 phone is not proven by local compilation/unit tests.
+Build configuration now targets ATAK 5.8.0; this source supersedes the
+50a0081 source package for ATAK 5.8 builds. Behavior on the requested
+ATAK 5.8 phone is not proven by local compilation/unit tests.
 TPP must provide its normal TAK SDK/build credentials; no local SDK,
 local.properties, generated outputs, or signing key is included.

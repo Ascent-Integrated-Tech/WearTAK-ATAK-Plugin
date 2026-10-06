@@ -9,7 +9,7 @@
 buildscript {
 
     ext.PLUGIN_VERSION = "5.8.0.3"
-    ext.ATAK_VERSION = "5.5.1"
+    ext.ATAK_VERSION = "5.8.0"
 
     def takdevVersion = '3.+'
 
@@ -59,7 +59,7 @@ buildscript {
         }
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.8.2'
+        classpath 'com.android.tools.build:gradle:8.13.2'
         if(isDevKitEnabled()) {
             classpath "com.atakmap.gradle:atak-gradle-takdev:${takdevVersion}"
         } else {
@@ -104,7 +104,7 @@ def supportedFlavors =
 ]
 
 android {
-    compileSdk 35
+    compileSdk 36
     namespace 'com.weartak.atak.weartak_companion.plugin'
 
     buildFeatures {
@@ -112,8 +112,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     //kotlinOptions {
@@ -231,8 +231,8 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 21
-        targetSdkVersion 34
+        minSdkVersion 23
+        targetSdkVersion 36
 
         def runTasks = gradle.startParameter.taskNames
         if(runTasks.toString().contains('bundle')) {
@@ -313,14 +313,14 @@ dependencies {
 
 configurations.all {
     resolutionStrategy.eachDependency { details ->
-        if (details.requested.group == 'androidx.core') {
-            details.useVersion "1.15.0"
+        if (details.requested.group == 'androidx.core' && details.requested.name != 'core-viewtree') {
+            details.useVersion "1.17.0"
         }
         if (details.requested.group == 'androidx.lifecycle') {
-            details.useVersion "2.8.7" 
+            details.useVersion "2.10.0"
         }
         if (details.requested.group == 'androidx.fragment') {
-            details.useVersion "1.8.5"
+            details.useVersion "1.8.9"
         }
     }   
 }           

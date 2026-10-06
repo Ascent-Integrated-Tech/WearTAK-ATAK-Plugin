@@ -20,6 +20,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
@@ -208,6 +209,8 @@ public class WearTakBleClient {
     private int bondStateOf(BluetoothDevice device) {
         try {
             return device.getBondState();
+        } catch (SecurityException ignored) {
+            return BluetoothDevice.BOND_NONE;
         } catch (Throwable ignored) {
             return BluetoothDevice.BOND_NONE;
         }
@@ -221,7 +224,12 @@ public class WearTakBleClient {
         if (appContext == null || bondReceiverRegistered) return;
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
         filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
-        appContext.registerReceiver(bondStateReceiver, filter);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Bluetooth broadcasts originate from a privileged UID outside the app.
+            appContext.registerReceiver(bondStateReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            appContext.registerReceiver(bondStateReceiver, filter);
+        }
         bondReceiverRegistered = true;
     }
 
