@@ -78,6 +78,10 @@ public class BleCotBridge {
             if (hrBpm == null) hrBpm = optIntNullable(p, "heart_rate");
             if (hrBpm == null) hrBpm = optIntNullable(p, "heartRateBpm");
 
+            Integer skinTemp = optIntNullable(p, "skt");
+            Integer exertion = optIntNullable(p, "exr");
+            Integer age = optIntNullable(p, "age");
+
             // Point: force ATAK EUD location
             EudFix fix = getEudFix();
             double lat = fix.lat, lon = fix.lon, hae = fix.hae, ce = fix.ce, le = fix.le;
@@ -97,6 +101,27 @@ public class BleCotBridge {
             // HR as custom physio tag (ATAK will preserve unknown tags)
             if (hrBpm != null && hrBpm > 0) {
                 detail.append("<physio hr='").append(hrBpm).append("'/>");
+
+                // Machine-readable physiology detail consumed by the biometrics plugin.
+                // The phone remains the CoT identity; the watch is the physiology source.
+                detail.append("<biometrics>")
+                        .append("<device>")
+                        .append("<model>WEAROS</model>")
+                        .append("<uid>").append(escapeXml(uid)).append("</uid>")
+                        .append("<hr>").append(hrBpm).append("</hr>");
+
+                if (skinTemp != null && skinTemp > 0) {
+                    detail.append("<skt>").append(skinTemp).append("</skt>");
+                }
+                if (exertion != null && exertion >= 0) {
+                    detail.append("<exert>").append(exertion).append("</exert>");
+                }
+                if (age != null && age > 0) {
+                    detail.append("<age>").append(age).append("</age>");
+                }
+
+                detail.append("</device>")
+                        .append("</biometrics>");
             }
 
             String xml =
