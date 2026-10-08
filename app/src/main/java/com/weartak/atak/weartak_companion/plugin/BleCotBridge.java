@@ -9,16 +9,25 @@ import android.util.Log;
 import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.Marker;
+import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.comms.CotDispatcher;
 import com.atakmap.coremap.cot.event.CotEvent;
+import com.atakmap.coremap.cot.event.CotPoint;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class BleCotBridge {
@@ -163,6 +172,10 @@ public class BleCotBridge {
     }
 
     public void sendMarkerCot(String envelopeJson) {
+        sendMarkerCot(envelopeJson, false);
+    }
+
+    private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -192,7 +205,7 @@ public class BleCotBridge {
             double le  = eudFix.le;
 
             String callsign = pluginCallsign;
-            if (watchAsSource) {
+            if (watchAsSource || usePayloadLocation) {
                 // use watch callsign & location fix, fallback to this device on null
                 callsign = optString(p, "cs", pluginCallsign);
                 lat = optDouble(p, "lat", lat);
@@ -297,6 +310,11 @@ public class BleCotBridge {
     //         b) sendEmergencyCancel() builds the Cancel Alert cot xml event & sends it both externally & internally
     // =========================================================================================
     private void handleEmergencyCot(String envelopeJson) {
+        handleEmergencyCot(envelopeJson, null);
+    }
+
+    /** @param fixOverride location to use for the event, or null to use {@link #getEudFix()}. */
+    private void handleEmergencyCot(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -311,10 +329,10 @@ public class BleCotBridge {
             boolean isCancel = "CANCEL".equalsIgnoreCase(state);
 
             if (isAlert) {
-                sendEmergencyAlert(envelopeJson);
+                sendEmergencyAlert(envelopeJson, fixOverride);
             }
             if (isCancel) {
-                sendEmergencyCancel(envelopeJson);
+                sendEmergencyCancel(envelopeJson, fixOverride);
             }
 
         } catch (Exception e) {
@@ -323,6 +341,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyAlert(String envelopeJson) {
+        sendEmergencyAlert(envelopeJson, null);
+    }
+
+    private void sendEmergencyAlert(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -345,8 +367,11 @@ public class BleCotBridge {
                 callsign = pluginCallsign;
             }
 
-            String catg     = optString(p, "catg", "Manual SOS Alert");
-            String desc     = optString(p, "desc", "SOS Alert");
+            String alertType = optString(p, "alertType", null);
+            String catg = optString(p, "catg",
+                    alertType == null ? "Manual SOS Alert" : alertType);
+            String desc = optString(p, "desc",
+                    alertType == null ? "SOS Alert" : alertType);
 
             int bat = optInt(p, "bat", -1);
 
@@ -357,7 +382,7 @@ public class BleCotBridge {
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
 
             // Point: use EUD location
-            EudFix fix = getEudFix();
+            EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
 
             StringBuilder detail = new StringBuilder();
             detail.append("<detail>");
@@ -399,6 +424,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyCancel(String envelopeJson) {
+        sendEmergencyCancel(envelopeJson, null);
+    }
+
+    private void sendEmergencyCancel(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -414,7 +443,7 @@ public class BleCotBridge {
 
             String callsign  = optString(p, "callsign", "WEAROS-TEST");
 
-            EudFix fix = getEudFix();
+            EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
 
             String xml =
                     "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
@@ -653,47 +682,178 @@ public class BleCotBridge {
         }
     }
 
+    public void handleGarminMessage(JSONObject envelope) {
+        if (envelope == null) return;
+        String msgType = envelope.optString("msgType", "").trim();
+        JSONObject payload = envelope.optJSONObject("payload");
+        if (msgType.isEmpty() || payload == null) {
+            Log.w(TAG, "handleGarminMessage: missing msgType or payload");
+            return;
+        }
+
+        String envelopeJson = envelope.toString();
+        switch (msgType) {
+            case "relay_hello":
+                Log.i(TAG, "Garmin watch relay connected: "
+                        + payload.optString("watchLabel", "Garmin watch"));
+                break;
+            case "marker":
+                sendMarkerCot(envelopeJson, true);
+                break;
+            case "marker_delete":
+                sendMarkerDelete(payload);
+                break;
+            case "emergency":
+                if (!payload.has("callsign")) {
+                    try {
+                        payload.put("callsign", pluginCallsign);
+                    } catch (JSONException e) {
+                        Log.e(TAG, "Could not set Garmin emergency callsign", e);
+                    }
+                }
+                // Cancellation must still clear the alert if the phone has lost its fix.
+                if ("CANCEL".equalsIgnoreCase(payload.optString("state", ""))) {
+                    handleEmergencyCot(envelope.toString(), getEudFix());
+                    break;
+                }
+                EudFix phoneFix = getValidEudFix();
+                if (phoneFix == null) {
+                    Log.w(TAG, "Garmin emergency rejected: no valid phone location (state="
+                            + payload.optString("state", "") + ", uid="
+                            + payload.optString("uid", "") + ")");
+                    break;
+                }
+                handleEmergencyCot(envelope.toString(), phoneFix);
+                break;
+            case "chat":
+                try {
+                    if (!payload.has("msg") && payload.has("text")) {
+                        payload.put("msg", payload.optString("text", ""));
+                    }
+                    if (!payload.has("cs")) payload.put("cs", pluginCallsign);
+                    if (!payload.has("roomUid")) payload.put("roomUid", "All Chat Rooms");
+                    if (!payload.has("roomTitle")) payload.put("roomTitle", "All Chat Rooms");
+                    sendChat(envelope.toString());
+                } catch (JSONException e) {
+                    Log.e(TAG, "Could not adapt Garmin chat message", e);
+                }
+                break;
+            case "entity_sync_request":
+                Log.i(TAG, "Garmin requested an ATAK entity snapshot");
+                break;
+            default:
+                Log.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
+                break;
+        }
+    }
+
+    public List<Map<String, Object>> getGarminEntitySnapshot(int requestedLimit) {
+        int limit = Math.max(1, Math.min(requestedLimit, 50));
+        ArrayList<Map<String, Object>> entities = new ArrayList<>();
+        MapView mv = mapView;
+        if (mv == null || mv.getRootGroup() == null) {
+            Log.w(TAG, "getGarminEntitySnapshot: ATAK map is unavailable");
+            return entities;
+        }
+
+        Collection<MapItem> mapItems = mv.getRootGroup().getItemsRecursive();
+        if (mapItems == null) return entities;
+        GeoPoint self = null;
+        if (mv.getSelfMarker() != null) self = mv.getSelfMarker().getPoint();
+        if (self == null || !self.isValid()
+                || !PhoneFixValidator.isUsable(self.getLatitude(), self.getLongitude())) {
+            Log.w(TAG, "getGarminEntitySnapshot: no valid self position");
+            return entities;
+        }
+        final ArrayList<double[]> distances = new ArrayList<>();
+        for (MapItem item : mapItems) {
+            if (!(item instanceof PointMapItem)) continue;
+            String uid = item.getUID();
+            String type = item.getType();
+            if (uid == null || uid.isEmpty() || uid.equals(myUid)
+                    || type == null || !type.startsWith("a-")) {
+                continue;
+            }
+
+            GeoPoint point = ((PointMapItem) item).getPoint();
+            if (point == null || !point.isValid()) continue;
+            double lat = point.getLatitude();
+            double lon = point.getLongitude();
+            if (Double.isNaN(lat) || Double.isInfinite(lat)
+                    || Double.isNaN(lon) || Double.isInfinite(lon)) {
+                continue;
+            }
+
+            Map<String, Object> entity = new HashMap<>();
+            entity.put("uid", uid);
+            entity.put("lat", lat);
+            entity.put("lon", lon);
+            entity.put("type", type);
+            entities.add(entity);
+            double distance = self.distanceTo(point);
+            distances.add(new double[]{distance, entities.size() - 1});
+        }
+
+        // Send the nearest units first so the watch map shows what is around the user.
+        java.util.Collections.sort(distances, (a, b) -> Double.compare(a[0], b[0]));
+        ArrayList<Map<String, Object>> nearest = new ArrayList<>();
+        for (int i = 0; i < distances.size() && nearest.size() < limit; i++) {
+            nearest.add(entities.get((int) distances.get(i)[1]));
+        }
+        Log.i(TAG, "getGarminEntitySnapshot: " + nearest.size() + " of "
+                + entities.size() + " units selected (self=" + (self != null) + ")");
+        return nearest;
+    }
+
+    private void sendMarkerDelete(JSONObject payload) {
+        String markerUid = optString(payload, "uid", null);
+        if (markerUid == null) {
+            Log.w(TAG, "sendMarkerDelete: missing marker uid");
+            return;
+        }
+
+        EudFix fix = getEudFix();
+        String now = iso8601(System.currentTimeMillis());
+        String stale = iso8601(System.currentTimeMillis() + 120_000);
+        String deleteUid = "garmin-delete-" + UUID.randomUUID();
+        String xml = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                + "<event version='2.0' uid='" + escapeXml(deleteUid) + "' type='t-x-d-d' "
+                + "time='" + escapeXml(now) + "' start='" + escapeXml(now)
+                + "' stale='" + escapeXml(stale) + "' how='h-g-i-g-o'>"
+                + "<point lat='" + trimDouble(fix.lat) + "' lon='" + trimDouble(fix.lon)
+                + "' hae='" + trimDouble(fix.hae) + "' ce='" + trimDouble(fix.ce)
+                + "' le='" + trimDouble(fix.le) + "'/>"
+                + "<detail><link uid='" + escapeXml(markerUid) + "'/></detail></event>";
+        dispatchCot("Garmin marker delete", xml);
+    }
+
     // =========================================================================================
     // EUD LOCATION HELPERS
     // =========================================================================================
 
-    /**
-     * Gets current ATAK self marker point; returns safe defaults if unavailable.
-     * You can later improve CE/LE extraction if you find the right metadata keys in your build.
-     */
+    /** Gets the current ATAK self point, with a safe fallback when no usable fix exists. */
     private EudFix getEudFix() {
+        EudFix fix = getValidEudFix();
+        return fix != null ? fix : EudFix.defaultFix();
+    }
+
+    /** Like {@link #getEudFix()}, but returns null instead of a 0,0 placeholder when there is no usable fix. */
+    private EudFix getValidEudFix() {
         try {
             MapView mv = mapView;
-
-            if (mv == null) {
-                Log.w(TAG, "getEudFix: MapView null");
-                return EudFix.defaultFix();
-            }
-            Marker sm = mv.getSelfMarker();
-            if (sm == null) {
-                Log.w(TAG, "getEudFix: SelfMarker null");
-                return EudFix.defaultFix();
-            }
-
-            GeoPoint gp = sm.getPoint();
-            if (gp == null) {
-                Log.w(TAG, "getEudFix: GeoPoint null");
-                return EudFix.defaultFix();
-            }
+            Marker sm = (mv != null) ? mv.getSelfMarker() : null;
+            GeoPoint gp = (sm != null) ? sm.getPoint() : null;
+            if (gp == null || !gp.isValid()) return null;
 
             double lat = gp.getLatitude();
             double lon = gp.getLongitude();
-            double hae = gp.getAltitude();
+            if (!PhoneFixValidator.isUsable(lat, lon)) return null;
 
-            // Default CE/LE large if we don't have metadata
-            double ce = 10.0;
-            double le = 10.0;
-
-            return new EudFix(lat, lon, hae, ce, le);
-
+            CotPoint point = new CotPoint(gp);
+            return new EudFix(lat, lon, point.getHae(), 10.0, 10.0);
         } catch (Throwable t) {
-            Log.e(TAG, "getEudFix: exception", t);
-            return EudFix.defaultFix();
+            Log.e(TAG, "getValidEudFix: exception", t);
+            return null;
         }
     }
 
