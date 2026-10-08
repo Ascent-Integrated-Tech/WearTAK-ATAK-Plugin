@@ -4,4 +4,6 @@
     <string name="app_name">WearTAK Companion</string>
     <!-- description -->
     <string name="app_desc">This plugin functions as a BLE-based CoT forwarder and reconstructor between WearTAK and ATAK EUDs, as well as allowing WearTAK settings to be configured via ATAK EUD.</string>
+    <string name="system_bonded_watch_toggle">Use Samsung Wearable Bond</string>
+    <string name="system_bonded_watch_checking">Use disabled; checking for a compatible bonded watch…</string>
 </resources>

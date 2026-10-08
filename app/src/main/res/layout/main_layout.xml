@@ -32,6 +32,21 @@
             android:textColor="@android:color/white"
             android:layout_marginBottom="10dp" />
 
+        <CheckBox
+            android:id="@+id/systemBondedWatchToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/system_bonded_watch_toggle"
+            android:checked="false"
+            android:enabled="false" />
+
+        <TextView
+            android:id="@+id/systemBondedWatchStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/system_bonded_watch_checking"
+            android:paddingBottom="8dp" />
+
         <Button
             android:id="@+id/scanButton"
             android:layout_width="match_parent"

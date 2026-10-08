@@ -4,6 +4,7 @@
 
 # ===== Local Android SDK config =====
 local.properties
+signing.properties
 
 # ===== IDE =====
 .idea/
