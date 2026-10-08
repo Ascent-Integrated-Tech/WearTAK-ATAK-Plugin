@@ -11,9 +11,24 @@ PLUGIN SUMMARY
 WearTAK is an ATAK companion plugin that connects ATAK with supported
 smartwatches. It relays Cursor-on-Target (CoT) data over Bluetooth Low
 Energy between ATAK and Samsung/Wear OS watches, including map markers,
-emergency alerts, and GeoChat messages. An optional Garmin Connect IQ
-relay is being developed on the separate garmin-connect-iq-integration
-branch.
+emergency alerts, and GeoChat messages. This integration branch includes
+the Garmin Connect IQ relay and an exclusive three-mode connection selector.
+The optional Garmin Connect IQ
+transport uses Garmin Connect Mobile on the phone rather than the
+Samsung/Wear OS BLE connection.
+
+GARMIN SETUP
+
+Pair the Garmin watch in Garmin Connect Mobile and install WearTAK-Garmin.
+On the watch, select Settings > Network Preferences and enable ATAK Relay.
+In the ATAK plugin device pane, select Garmin Connect IQ. The connection
+badge and status text report the phone/watch link; finding a watch alone
+does not confirm the WearTAK app is installed or that a message arrived.
+The relay supports watch markers, marker deletion, emergencies, GeoChat,
+and requested snapshots of nearby ATAK units. New emergency alerts and
+nearby-unit snapshots require a valid phone location; cancellation remains
+available if the phone loses GPS. Garmin transport is optional and does
+not replace the Samsung/Wear OS setup.
 
 
 _________________________________________________________________
@@ -88,13 +103,61 @@ property. This source archive is therefore not build-verified on ATAK 5.8.
 _________________________________________________________________
 DEVELOPER NOTES
 
-SAMSUNG SYSTEM-BONDED WATCH TEST BRANCH
+THREE-MODE SELECTOR INTEGRATION
 
-On WEARTAK-53-reuse-samsung-system-bluetooth-bond, "Use Samsung Wearable Bond"
-is a persisted user opt-in, OFF by default (including upgrades). Starting
-the Companion plugin checks for a compatible bonded candidate but never
-connects automatically unless this option is enabled. Enable Bluetooth,
-grant Nearby Devices permissions to the
+The connection-mode button offers three real, mutually exclusive routes:
+- Use Samsung Wearable Bond: explicit opt-in to automatic discovery,
+  connection and reconnection through the existing Samsung controller.
+- Traditional BLE Pairing: manual Scan/Connect and BLE watch settings.
+  No automatic Samsung candidate observation runs in this mode.
+- Garmin Connect IQ: starts the Garmin Connect Mobile SDK relay, including
+  watch CoT/messages and requested nearby entity snapshots. Install WearTAK
+  on the paired Garmin watch and enable Settings > Network Preferences >
+  ATAK Relay. Retry Garmin Connect IQ restarts this route if initialization
+  or discovery failed. Direct BLE settings are not available for Garmin.
+
+Selecting a different mode stops the prior route (including Samsung
+observation, timers, scans and GATT, or Garmin SDK listeners), clears the
+old connected card/settings state, and then starts the new route. Queued
+callbacks are generation-guarded, including after switching away and back.
+Re-selecting the current mode does not disconnect it. Plugin shutdown stops
+all transport activity without clearing the saved selection.
+
+The host preferences file weartak_companion_prefs owns connection_mode.
+Saved traditional_ble from the earlier UI-only selector is honored; its
+plugin-context preference is read once if the host value is absent. With
+no selector value, legacy use_system_bonded_watch=true migrates to Samsung;
+false/absent migrates to Traditional. Unknown mode values fall back to
+Traditional, never automatic use. New values are samsung_system_bond,
+traditional_ble and garmin_connect_iq. The legacy Samsung boolean stays
+synchronized for downgrade compatibility; preferred BLE device keys are
+unchanged. Restart resumes the saved route; Traditional never auto-connects.
+
+Deliberate BLE Disconnect selects/persists Traditional before disconnecting,
+so Samsung retries cannot immediately reconnect. Scan/manual Connect are
+available only in Traditional. To stop Garmin, select another mode; plugin
+shutdown also stops it. Switching does not delete Android Bluetooth bonds.
+
+This branch is stacked on WEARTAK-53 and merges Garmin feature tip 548874d.
+Its requests depend on Samsung !5/#9 and Garmin !6/#10; the stacked diff
+includes Garmin changes until that independent feature lands. ATAK 5.8
+configuration remains intact. No existing requests have been merged.
+
+Integration validation: normal Gradle targeted tests/compile are blocked
+at configuration by the unavailable local takdev plugin in this worktree.
+41 targeted tests passed using the existing cached JUnit 4.13.2 runner
+(selector, settings-session guard, Samsung controller, Garmin SDK lifecycle/
+subscription/send behavior, phone fix validator) and Gradle-generated Android
+test stubs. All main Java sources compiled
+at Java 8 compatibility against older ATAK 5.5.1 API stubs, SDK 36 and
+cached Android/Garmin dependencies with a generated resource-ID stub.
+All source XML parsed. These fallback checks do not verify ATAK 5.8 API
+compatibility, Android resource linking, APK packaging, or phone/watch behavior.
+
+SAMSUNG TRANSPORT DETAILS (SELECTOR-OWNED)
+
+Samsung mode is a persisted explicit opt-in, not the new-install default.
+Enable Bluetooth, grant Nearby Devices permissions to the
 ATAK host, and pair the Samsung watch through Android/Galaxy Wearable first.
 This option reuses the existing Android Bluetooth bond established through
 Galaxy Wearable without changing or removing that pairing.
@@ -109,24 +172,17 @@ A Samsung device name alone is never sufficient. This automatic route
 never creates or removes a bond. The original Scan/manual Connect route
 is retained and may request a new BLE bond for an unbonded selection.
 
-The toggle controls WearTAK use, not pairing or Galaxy Wearable. It is
-greyed out while OFF with no verified compatible bond. Once a bonded
-WearTAK advertiser is identified, the toggle becomes available. A previously
-identified watch still bonded remains available even with Bluetooth off or
-the watch unreachable; availability is not a reachability guarantee.
+The selector controls WearTAK use, not pairing or Galaxy Wearable.
+Samsung mode can be selected before a candidate is available; it reports
+unavailability and retries, rather than claiming a reachable watch.
 While Android's Bluetooth service is off, the last confirmed bond is retained
 and reverified when Bluetooth returns (or invalidated by a bond-loss event).
-Without Nearby Devices permission the bond cannot be verified. If already
-ON the control always remains turn-off-able. An enabled preference is never
+Without Nearby Devices permission the bond cannot be verified.
+The selected mode is never
 cleared by transient unreachability, Bluetooth-off, permission loss, or bond
-loss; retry discovery continues until the user turns use off.
-
-Turning ON starts automatic connection/reconnection. Turning OFF cancels
-the current discovery/setup/retry session and disconnects only WearTAK's
-GATT session. Disabled candidate observation may then run without connecting:
-unknown candidates are retried using the same capped backoff, and known
-bonds are checked every 60 seconds without scanning. Neither operation
-removes a bond or changes Galaxy Wearable's connection.
+loss; retry discovery continues until the user changes mode or disconnects.
+Changing mode cancels discovery/setup/retries and disconnects only WearTAK's
+GATT session, never Galaxy Wearable or the system bond.
 
 CONNECTED, the connected card, and settings requests are enabled only
 after service discovery and successful A11B notification subscription
@@ -137,17 +193,18 @@ disabled and missing permissions are reported, and periodic retries recover
 after Bluetooth/permissions are restored. This does not request permissions
 on the user's behalf.
 
-Scan, manual Connect, and deliberate Disconnect turn the opt-in OFF and
-persist that choice. They also stop candidate observation for the current
-plugin lifecycle so manual scans/connections do not compete with it.
-Restarting the plugin resumes identification only, not automatic use;
-only a saved ON preference resumes automatic connection. Disconnect does
-not immediately reconnect or forget the system bond.
 SystemBondedWatchConnection.start()/stop() are the explicit activation seam:
-a future connection-mode selector must stop this controller before activating
-another transport and start it only when System Bonded Watch is selected.
-observe() is identification-only and must also be stopped for other modes.
-No selector, Garmin transport, or other feature branches are included here.
+the selector stops this controller before activating another transport and
+starts it only when Samsung is selected. observe() remains available to
+other callers but is not used by this selector, so Traditional and Garmin
+have no competing Samsung observation.
+
+BLE settings are isolated per device/session. Mode changes, manual scans/
+connections, disconnects and trust loss clear the server adapter, editors,
+certificate display, callsign and snapshot state. Send stays disabled until
+this session receives a snapshot containing takServerList and reportIntSecs;
+partial settings_changed messages alone do not unlock a new session. Queued
+previous-session settings and certificate-picker callbacks are discarded.
 
 For end-to-end bond preservation use the corresponding WearOS Samsung
 system-pairing watch version (wearos-tak-civ-samsung-system-pairing,

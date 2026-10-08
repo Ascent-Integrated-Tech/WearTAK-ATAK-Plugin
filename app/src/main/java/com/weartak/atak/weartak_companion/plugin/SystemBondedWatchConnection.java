@@ -1,7 +1,7 @@
 package com.weartak.atak.weartak_companion.plugin;
 
 /**
- * Explicit activation seam for a future connection-mode selector. All state and transport
+ * Explicit activation seam for the connection-mode selector. All state and transport
  * calls run on the supplied main-thread scheduler. This route never creates or removes bonds.
  */
 public final class SystemBondedWatchConnection {
