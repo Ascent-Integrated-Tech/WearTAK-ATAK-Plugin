@@ -90,12 +90,14 @@ DEVELOPER NOTES
 
 SAMSUNG SYSTEM-BONDED WATCH TEST BRANCH
 
-On feature/weartak-samsung-system-pairing, "Use system-bonded WearTAK watch"
+On WEARTAK-53-reuse-samsung-system-bluetooth-bond, "Use Samsung Wearable Bond"
 is a persisted user opt-in, OFF by default (including upgrades). Starting
 the Companion plugin checks for a compatible bonded candidate but never
 connects automatically unless this option is enabled. Enable Bluetooth,
 grant Nearby Devices permissions to the
 ATAK host, and pair the Samsung watch through Android/Galaxy Wearable first.
+This option reuses the existing Android Bluetooth bond established through
+Galaxy Wearable without changing or removing that pairing.
 Run the WearTAK watch app so its A11A BLE service is available.
 
 Discovery uses the previously identified WearTAK address if still bonded;
