@@ -1,6 +1,8 @@
 package com.weartak.atak.weartak_companion.plugin;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.atakmap.android.maps.MapView;
@@ -46,6 +48,8 @@ public final class GarminConnectIqClient {
 
     private final Context appContext;
     private final Listener listener;
+    // Serialize SDK callbacks with selector-owned main-thread start/stop, including registrations.
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object lock = new Object();
     private final Map<Long, DeviceApp> devices = new HashMap<>();
 
@@ -115,38 +119,42 @@ public final class GarminConnectIqClient {
         return new ConnectIQ.ConnectIQListener() {
             @Override
             public void onSdkReady() {
-                synchronized (lock) {
-                    initializing = false;
-                    if (!started) return;
-                    sdkReady = true;
-                }
-                refreshDevices();
+                mainHandler.post(() -> {
+                    synchronized (lock) {
+                        initializing = false;
+                        if (!started) return;
+                        sdkReady = true;
+                    }
+                    refreshDevices();
+                });
             }
 
             @Override
             public void onInitializeError(ConnectIQ.IQSdkErrorStatus errorStatus) {
-                synchronized (lock) {
-                    initializing = false;
-                    if (!started) return;
-                }
-                publishConnectionState();
-                publishStatus("Garmin Connect IQ unavailable: " + errorStatus);
+                mainHandler.post(() -> {
+                    synchronized (lock) {
+                        initializing = false;
+                        if (!started) return;
+                    }
+                    publishConnectionState();
+                    publishStatus("Garmin Connect IQ unavailable: " + errorStatus);
+                });
             }
 
             @Override
             public void onSdkShutDown() {
-                boolean shouldNotify;
-                synchronized (lock) {
-                    if (!started) return;
-                    sdkReady = false;
-                    initializing = false;
-                    for (DeviceApp device : devices.values()) {
-                        device.connected = false;
+                mainHandler.post(() -> {
+                    synchronized (lock) {
+                        if (!started) return;
+                        sdkReady = false;
+                        initializing = false;
+                        for (DeviceApp device : devices.values()) {
+                            device.connected = false;
+                        }
                     }
-                    shouldNotify = started;
-                }
-                publishConnectionState();
-                if (shouldNotify) publishStatus("Garmin Connect IQ stopped.");
+                    publishConnectionState();
+                    publishStatus("Garmin Connect IQ stopped.");
+                });
             }
         };
     }
@@ -249,16 +257,18 @@ public final class GarminConnectIqClient {
             try {
                 connectIQ.sendMessage(target.device, target.app, envelope,
                         (device, app, messageStatus) -> {
-                            synchronized (lock) {
-                                if (!started || devices.get(target.device.getDeviceIdentifier()) != target) return;
-                            }
-                            if (messageStatus == ConnectIQ.IQMessageStatus.SUCCESS) {
-                                Log.i(TAG, "Sent " + msgType + " to " + device.getFriendlyName());
-                            } else {
-                                Log.w(TAG, "Message " + msgType + " to "
-                                        + device.getFriendlyName() + " failed: " + messageStatus);
-                                publishStatus("Garmin message failed: " + messageStatus);
-                            }
+                            mainHandler.post(() -> {
+                                synchronized (lock) {
+                                    if (!started || devices.get(target.device.getDeviceIdentifier()) != target) return;
+                                }
+                                if (messageStatus == ConnectIQ.IQMessageStatus.SUCCESS) {
+                                    Log.i(TAG, "Sent " + msgType + " to " + device.getFriendlyName());
+                                } else {
+                                    Log.w(TAG, "Message " + msgType + " to "
+                                            + device.getFriendlyName() + " failed: " + messageStatus);
+                                    publishStatus("Garmin message failed: " + messageStatus);
+                                }
+                            });
                         });
             } catch (InvalidStateException | ServiceUnavailableException | IllegalArgumentException e) {
                 Log.e(TAG, "Unable to send " + msgType + " to "
@@ -293,18 +303,20 @@ public final class GarminConnectIqClient {
 
         try {
             connectIQ.registerForDeviceEvents(device, (changedDevice, newStatus) -> {
-                synchronized (lock) {
-                    if (!started || devices.get(device.getDeviceIdentifier()) != entry) return;
-                }
-                entry.connected = newStatus == IQDevice.IQDeviceStatus.CONNECTED;
-                publishConnectionState();
-                if (entry.connected) {
-                    loadApplication(entry);
-                    publishStatus("Garmin connected: " + changedDevice.getFriendlyName()
-                            + ". " + WATCH_RELAY_INSTRUCTIONS);
-                } else {
-                    publishStatus("Garmin not connected: " + changedDevice.getFriendlyName());
-                }
+                mainHandler.post(() -> {
+                    synchronized (lock) {
+                        if (!started || devices.get(device.getDeviceIdentifier()) != entry) return;
+                    }
+                    entry.connected = newStatus == IQDevice.IQDeviceStatus.CONNECTED;
+                    publishConnectionState();
+                    if (entry.connected) {
+                        loadApplication(entry);
+                        publishStatus("Garmin connected: " + changedDevice.getFriendlyName()
+                                + ". " + WATCH_RELAY_INSTRUCTIONS);
+                    } else {
+                        publishStatus("Garmin not connected: " + changedDevice.getFriendlyName());
+                    }
+                });
             });
             try {
                 entry.connected = connectIQ.getDeviceStatus(device)
@@ -334,22 +346,26 @@ public final class GarminConnectIqClient {
                     new ConnectIQ.IQApplicationInfoListener() {
                         @Override
                         public void onApplicationInfoReceived(IQApp app) {
-                            synchronized (lock) {
-                                entry.appInfoPending = false;
-                                if (!started || app == null) return;
-                                entry.app = app;
-                            }
-                            registerAppEvents(entry);
+                            mainHandler.post(() -> {
+                                synchronized (lock) {
+                                    entry.appInfoPending = false;
+                                    if (!started || app == null) return;
+                                    entry.app = app;
+                                }
+                                registerAppEvents(entry);
+                            });
                         }
 
                         @Override
                         public void onApplicationNotInstalled(String applicationId) {
-                            synchronized (lock) {
-                                if (!started) return;
-                                entry.appInfoPending = false;
-                            }
-                            publishStatus("WearTAK is not installed on "
-                                    + entry.device.getFriendlyName() + ".");
+                            mainHandler.post(() -> {
+                                synchronized (lock) {
+                                    if (!started) return;
+                                    entry.appInfoPending = false;
+                                }
+                                publishStatus("WearTAK is not installed on "
+                                        + entry.device.getFriendlyName() + ".");
+                            });
                         }
                     });
         } catch (InvalidStateException | ServiceUnavailableException e) {
@@ -370,27 +386,28 @@ public final class GarminConnectIqClient {
         try {
             connectIQ.registerForAppEvents(entry.device, entry.app,
                     (device, app, messageData, messageStatus) -> {
-                        synchronized (lock) {
-                            if (!started) return;
-                        }
-                        if (messageStatus != ConnectIQ.IQMessageStatus.SUCCESS) {
-                            Log.w(TAG, "Garmin message receive failed: " + messageStatus);
-                            publishStatus("Garmin receive error: " + messageStatus);
-                            return;
-                        }
-                        if (messageData == null) return;
-                        // A message from the watch proves the link is up even if no
-                        // device status event has been delivered yet.
-                        entry.connected = true;
-                        publishConnectionState();
-                        for (Object item : messageData) {
-                            if (item instanceof Map) {
-                                JSONObject envelope = toJsonObject((Map<?, ?>) item);
-                                if (envelope != null && listener != null) {
-                                    listener.onMessageReceived(envelope);
+                        mainHandler.post(() -> {
+                            synchronized (lock) {
+                                if (!started) return;
+                            }
+                            if (messageStatus != ConnectIQ.IQMessageStatus.SUCCESS) {
+                                Log.w(TAG, "Garmin message receive failed: " + messageStatus);
+                                publishStatus("Garmin receive error: " + messageStatus);
+                                return;
+                            }
+                            if (messageData == null) return;
+                            // A watch message proves the link is up even without a device event.
+                            entry.connected = true;
+                            publishConnectionState();
+                            for (Object item : messageData) {
+                                if (item instanceof Map) {
+                                    JSONObject envelope = toJsonObject((Map<?, ?>) item);
+                                    if (envelope != null && listener != null) {
+                                        listener.onMessageReceived(envelope);
+                                    }
                                 }
                             }
-                        }
+                        });
                     });
             publishStatus("WearTAK found on " + entry.device.getFriendlyName()
                     + ". " + WATCH_RELAY_INSTRUCTIONS);
