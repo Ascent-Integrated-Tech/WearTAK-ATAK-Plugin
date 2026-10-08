@@ -330,9 +330,8 @@ public class WearTakBleClient {
         }
         stopScanInternal("scanForDevices(): pre-stop");
 
-        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
-                != PackageManager.PERMISSION_GRANTED) {
-            failScan(listener, "Missing BLUETOOTH_SCAN permission");
+        if (!hasScanPermission()) {
+            failScan(listener, "Missing Bluetooth scan or location permission");
             return;
         }
         try {
@@ -436,8 +435,7 @@ public class WearTakBleClient {
 
         try {
             if (scanner != null && activeScanCallback != null) {
-                if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
-                        == PackageManager.PERMISSION_GRANTED) {
+                if (hasScanPermission()) {
                     scanner.stopScan(activeScanCallback);
                 }
             }
@@ -577,9 +575,8 @@ public class WearTakBleClient {
             return;
         }
 
-        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED) {
-            error("Missing BLUETOOTH_CONNECT permission");
+        if (!hasConnectPermission()) {
+            error("Missing Bluetooth connect permission");
             return;
         }
 
@@ -652,9 +649,8 @@ public class WearTakBleClient {
             return;
         }
 
-        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED) {
-            error("Missing BLUETOOTH_CONNECT permission");
+        if (!hasConnectPermission()) {
+            error("Missing Bluetooth connect permission");
             return;
         }
 
@@ -778,9 +774,8 @@ public class WearTakBleClient {
             return false;
         }
 
-        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED) {
-            error("Missing BLUETOOTH_CONNECT permission");
+        if (!hasConnectPermission()) {
+            error("Missing Bluetooth connect permission");
             return false;
         }
         BluetoothDevice device = bluetoothGatt.getDevice();
@@ -837,13 +832,12 @@ public class WearTakBleClient {
             return;
         }
 
-        if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (!hasConnectPermission()) {
             synchronized (txLock) {
                 txQueue.clear();
                 txInFlight = false;
             }
-            error("TX aborted: missing BLUETOOTH_CONNECT permission");
+            error("TX aborted: missing Bluetooth connect permission");
             return;
         }
 
@@ -952,9 +946,8 @@ public class WearTakBleClient {
                 return;
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    failSecureSession("Missing BLUETOOTH_CONNECT permission", "connect_permission_lost");
+                if (!hasConnectPermission()) {
+                    failSecureSession("Missing Bluetooth connect permission", "connect_permission_lost");
                     return;
                 }
 
@@ -983,9 +976,8 @@ public class WearTakBleClient {
             mtuNegotiated = (status == BluetoothGatt.GATT_SUCCESS);
             if (mtuNegotiated) negotiatedMtu = mtu;
 
-            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                    != PackageManager.PERMISSION_GRANTED) {
-                failSecureSession("Missing BLUETOOTH_CONNECT permission", "mtu_permission_lost");
+            if (!hasConnectPermission()) {
+                failSecureSession("Missing Bluetooth connect permission", "mtu_permission_lost");
                 return;
             }
 
@@ -1028,9 +1020,8 @@ public class WearTakBleClient {
         }
 
         private void enableTxNotifications(BluetoothGatt gatt, BluetoothGattCharacteristic tx) {
-            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                    != PackageManager.PERMISSION_GRANTED) {
-                failSecureSession("Missing BLUETOOTH_CONNECT permission", "notify_permission_lost");
+            if (!hasConnectPermission()) {
+                failSecureSession("Missing Bluetooth connect permission", "notify_permission_lost");
                 return;
             }
 
@@ -1080,6 +1071,12 @@ public class WearTakBleClient {
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             byte[] value = characteristic != null ? characteristic.getValue() : null;
+            onCharacteristicChanged(gatt, characteristic, value);
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt,
+                                            BluetoothGattCharacteristic characteristic, byte[] value) {
             final byte[] data = value != null ? value.clone() : null;
             dispatchGatt(gatt, () -> handleCharacteristicChanged(characteristic, data));
         }
@@ -1176,8 +1173,7 @@ public class WearTakBleClient {
         bluetoothGatt = null;
         try {
             if (closing != null) {
-                if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                        == PackageManager.PERMISSION_GRANTED) {
+                if (hasConnectPermission()) {
                     try { closing.disconnect(); } catch (Throwable ignored) {}
                 }
                 try { closing.close(); } catch (Throwable ignored) {}
@@ -1203,17 +1199,31 @@ public class WearTakBleClient {
     }
 
     private boolean hasConnectPermission() {
+        String permission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                ? Manifest.permission.BLUETOOTH_CONNECT : Manifest.permission.BLUETOOTH;
         return appContext != null && ActivityCompat.checkSelfPermission(
-                appContext, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+                appContext, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasScanPermission() {
+        if (appContext == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+        return ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_ADMIN)
+                == PackageManager.PERMISSION_GRANTED
+                && ActivityCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private String bluetoothUnavailableReason() {
         if (bluetoothAdapter == null) return "Bluetooth adapter unavailable";
-        if (!hasConnectPermission()) return "Missing BLUETOOTH_CONNECT permission";
+        if (!hasConnectPermission()) return "Missing Bluetooth connect permission";
         try {
             return bluetoothAdapter.isEnabled() ? null : "Bluetooth disabled";
         } catch (SecurityException e) {
-            return "Missing BLUETOOTH_CONNECT permission";
+            return "Missing Bluetooth connect permission";
         }
     }
 
@@ -1263,8 +1273,7 @@ public class WearTakBleClient {
 
     private String safeGetDeviceName(BluetoothDevice d) {
         try {
-            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                    != PackageManager.PERMISSION_GRANTED) return null;
+            if (!hasConnectPermission()) return null;
             return d.getName();
         } catch (Throwable ignored) {}
         return null;
@@ -1273,8 +1282,7 @@ public class WearTakBleClient {
     private String safeGetDeviceAlias(BluetoothDevice d) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null;
         try {
-            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
-                    != PackageManager.PERMISSION_GRANTED) return null;
+            if (!hasConnectPermission()) return null;
             return d.getAlias();
         } catch (Throwable ignored) {}
         return null;
