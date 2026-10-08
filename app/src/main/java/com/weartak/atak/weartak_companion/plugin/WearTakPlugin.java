@@ -56,6 +56,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private WearTakBleClient bleClient;
     private BleCotBridge bleCotBridge;
+    private WearTakDownstreamBridge downstreamBridge;
 
     // ------------------ UI ROOT ------------------
     // IMPORTANT: This is the inflated main_layout.xml root view.
@@ -263,8 +264,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             Log.i(TAG, "BleCotBridge initialized in plugin");
         }
 
-        bleClient.start();
-
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
             @Override
             public void onReady() {
@@ -272,6 +271,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 mainHandler.post(() -> {
                     if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
                     requestSettingsFromWatch("onReady");
+                    ensureDownstreamBridge();
+                    if (downstreamBridge != null) downstreamBridge.sendInitialMarkerSnapshot();
                 });
             }
 
@@ -367,6 +368,21 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
         });
+        bleClient.start();
+        ensureDownstreamBridge();
+    }
+
+    private void ensureDownstreamBridge() {
+        if (downstreamBridge != null || bleClient == null) return;
+        MapView currentMapView = MapView.getMapView();
+        if (currentMapView == null) {
+            Log.w(TAG, "MapView is not ready; downstream bridge will retry on the next BLE-ready event");
+            return;
+        }
+        downstreamBridge = new WearTakDownstreamBridge(
+                currentMapView,
+                json -> bleClient != null && bleClient.writeJsonLineToWatch(json));
+        if (!downstreamBridge.start()) downstreamBridge = null;
     }
 
     @Override
@@ -377,6 +393,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (client != null) {
             client.setJsonListener(null);
             client.stop();
+        }
+        if (downstreamBridge != null) {
+            downstreamBridge.stop();
+            downstreamBridge = null;
         }
         if (uiService != null && templatePane != null && uiService.isPaneVisible(templatePane)) {
             uiService.closePane(templatePane);

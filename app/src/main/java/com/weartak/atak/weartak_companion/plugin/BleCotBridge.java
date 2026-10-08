@@ -31,7 +31,6 @@ public class BleCotBridge {
     private MapView mapView;
     private String myUid;
     private String pluginCallsign;
-    private Boolean watchAsSource = false;
 
     public BleCotBridge() {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
@@ -213,6 +212,7 @@ public class BleCotBridge {
             String markerUid = optString(p, "uid",
                     optString(env, "msgUid", UUID.randomUUID().toString()));
             String type = optString(p, "type", "a-f-G");
+            WatchOriginRegistry.markMarker(markerUid);
 
             // Times: prefer payload.tStart/tStale (your marker payload uses these)
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
@@ -223,22 +223,13 @@ public class BleCotBridge {
             // Point fields (marker payload has these)
             EudFix eudFix = getEudFix();
 
-            double lat = eudFix.lat;
-            double lon = eudFix.lon;
-            double hae = eudFix.hae;
-            double ce  = eudFix.ce;
-            double le  = eudFix.le;
+            double lat = optDouble(p, "lat", eudFix.lat);
+            double lon = optDouble(p, "lon", eudFix.lon);
+            double hae = optDouble(p, "hae", eudFix.hae);
+            double ce  = optDouble(p, "ce", eudFix.ce);
+            double le  = optDouble(p, "le", eudFix.le);
 
             String callsign = pluginCallsign;
-            if (watchAsSource) {
-                // use watch callsign & location fix, fallback to this device on null
-                callsign = optString(p, "cs", pluginCallsign);
-                lat = optDouble(p, "lat", lat);
-                lon = optDouble(p, "lon", lon);
-                hae = optDouble(p, "hae", hae);
-                ce  = optDouble(p, "ce", ce);
-                le  = optDouble(p, "le", le);
-            }
 
             Integer batteryPct = optIntNullable(p, "bat");
             if (batteryPct == null) batteryPct = optIntNullable(p, "battery_percent");
@@ -371,17 +362,13 @@ public class BleCotBridge {
 
             String uid = optString(p, "uid",
                     optString(env, "msg_id", UUID.randomUUID().toString()));
+            WatchOriginRegistry.markEmergency(uid);
 
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign = "";
-            if (watchAsSource) {
-                // use watch callsign, if not, fallback to this EUD callsign.
-                callsign = optString(p, "cs", pluginCallsign);
-            } else {
-                callsign = pluginCallsign;
-            }
+            // The phone is the TAK identity and gateway for companion traffic.
+            String callsign = pluginCallsign;
 
             String catg     = optString(p, "catg", "Manual SOS Alert");
             String desc     = optString(p, "desc", "SOS Alert");
@@ -501,6 +488,7 @@ public class BleCotBridge {
             // Message id (used as messageId and last segment of GeoChat UID)
             String msgUid = optString(p, "uid",
                     optString(env, "msg_id", UUID.randomUUID().toString()));
+            WatchOriginRegistry.markChat(msgUid);
 
             // Destination identity
             // In your watch schema: roomUid = chat room id, roomTitle = display title
@@ -549,6 +537,7 @@ public class BleCotBridge {
             // GeoChat.<senderUid>.<dstUid>.<msgId>
             // -------------------------------
             String eventUid = "GeoChat." + selfUid + "." + dstUid + "." + msgUid;
+            WatchOriginRegistry.markChat(eventUid);
 
             // -------------------------------
             // Point: match WearOS style (0/0 + huge errors)
