@@ -9,7 +9,7 @@
 buildscript {
 
     ext.PLUGIN_VERSION = "5.8.0.3"
-    ext.ATAK_VERSION = "5.5.1"
+    ext.ATAK_VERSION = project.findProperty("atak.version") ?: "5.5.1"
 
     def takdevVersion = '3.+'
 
@@ -289,6 +289,23 @@ def getCommandFlavor() {
 dependencies {
     implementation fileTree(dir: 'libs', include: '*.jar')
 
+    def takSdkMainJarPath = project.findProperty('tak.sdk.main.jar')
+    if (takSdkMainJarPath == null) {
+        File localPropertiesFile = rootProject.file('local.properties')
+        if (localPropertiesFile.isFile()) {
+            Properties localProperties = new Properties()
+            localPropertiesFile.withInputStream { localProperties.load(it) }
+            takSdkMainJarPath = localProperties.getProperty('tak.sdk.main.jar')
+        }
+    }
+    if (takSdkMainJarPath != null && !takSdkMainJarPath.toString().trim().isEmpty()) {
+        File takSdkMainJar = project.file(takSdkMainJarPath)
+        if (!takSdkMainJar.isFile()) {
+            throw new GradleException("TAK SDK main.jar not found: ${takSdkMainJar}")
+        }
+        compileOnly files(takSdkMainJar)
+    }
+
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20231013'
 
@@ -298,6 +315,8 @@ dependencies {
         exclude group: "androidx.appcompat", module: "appcompat"
         exclude group: "androidx.appcompat", module: "appcompat-resources"
     }
+
+    implementation "com.garmin.connectiq:ciq-companion-app-sdk:2.4.0@aar"
 
     // Keep these, but explicitly exclude appcompat just in case.
     implementation("androidx.recyclerview:recyclerview:1.3.2") {
