@@ -144,6 +144,9 @@ ATAK host, and pair the Samsung watch through Android/Galaxy Wearable first.
 This option reuses the existing Android Bluetooth bond established through
 Galaxy Wearable without changing or removing that pairing.
 Run the WearTAK watch app so its A11A BLE service is available.
+On Android 6 through 11, BLE scanning requires the ATAK host's location
+permission and legacy Bluetooth permissions. Android 12 and later use
+Nearby Devices permissions instead.
 
 Discovery uses the previously identified WearTAK address if still bonded;
 otherwise it scans for bonded devices advertising WearTAK's A11A service.
