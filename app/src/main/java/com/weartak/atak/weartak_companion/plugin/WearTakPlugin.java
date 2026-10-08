@@ -115,10 +115,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // Strings (keep literal for now; you can move to strings.xml later)
     private static final String SCAN_TEXT_DEFAULT = "Scan for WearTAK Devices";
     private static final String SCAN_TEXT_REFRESH = "Scan again to refresh devices";
-    private static final String PREFS_NAME = "weartak_companion_prefs";
-    private static final String KEY_PREF_ADDR = "preferred_device_address";
-    private static final String KEY_PREF_NAME = "preferred_device_name";
-    private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
+    private static final String PREFS_NAME = "wtk_pairing";
+    private static final String KEY_PREF_ADDR = "preferred_address";
+    private static final String KEY_PREF_NAME = "preferred_name";
     private static final String NO_P12_SELECTED = "No certificate selected.";
     private static final String WATCH_P12_SELECTED = "Certificate loaded from watch sync.";
 
@@ -382,6 +381,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (uiService != null && templatePane != null && uiService.isPaneVisible(templatePane)) {
             uiService.closePane(templatePane);
         }
+        bleCotBridge = null;
+        templatePane = null;
+        paneView = null;
+        connectedCardView = null;
+        deviceAdapter = null;
+        connectionStatusTV = null;
+        autoReconnectCB = null;
+        scanButton = null;
+        deviceList = null;
+        emptyState = null;
+        settingsScreenRoot = null;
+        deviceScreenRoot = null;
     }
 
     private void confirmScanWhileConnected() {
@@ -419,7 +430,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         boolean connected = bleClient != null && bleClient.isConnected();
         if (connectionStatusTV != null) {
             boolean bluetoothOff = bleClient != null && !bleClient.isBluetoothEnabled();
+            boolean reconnecting = bleClient != null && bleClient.isAutoReconnecting();
             connectionStatusTV.setText(connected ? "CONNECTED"
+                    : reconnecting ? "RECONNECTING"
                     : bluetoothOff ? "DISCONNECTED - BLUETOOTH OFF" : "DISCONNECTED");
         }
 
@@ -1246,7 +1259,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 .edit()
                 .putString(KEY_PREF_ADDR, address.trim())
                 .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
-                .putLong(KEY_PREF_SET_AT, System.currentTimeMillis())
                 .apply();
     }
 
@@ -1264,7 +1276,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         prefs.edit()
                 .remove(KEY_PREF_ADDR)
                 .remove(KEY_PREF_NAME)
-                .remove(KEY_PREF_SET_AT)
                 .apply();
     }
 

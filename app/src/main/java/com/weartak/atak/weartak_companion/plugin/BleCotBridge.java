@@ -37,9 +37,21 @@ public class BleCotBridge {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
         internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
         mapView = getMapView();
-        myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
-        pluginCallsign = mapView.getDeviceCallsign();  // cs of eud
+        refreshIdentity();
         Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
+    }
+
+    private void refreshIdentity() {
+        try {
+            mapView = getMapView();
+            Marker self = mapView == null ? null : mapView.getSelfMarker();
+            myUid = self == null ? "ANDROID-UNKNOWN" : self.getUID();
+            pluginCallsign = mapView == null ? "ANDROID-UNKNOWN" : mapView.getDeviceCallsign();
+        } catch (Throwable t) {
+            myUid = "ANDROID-UNKNOWN";
+            pluginCallsign = "ANDROID-UNKNOWN";
+            Log.w(TAG, "Unable to resolve ATAK identity", t);
+        }
     }
 
     // =========================================================================================
@@ -47,6 +59,7 @@ public class BleCotBridge {
     // =========================================================================================
     public void sendStandardPli(String envelopeJson) {
         try {
+            refreshIdentity();
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
@@ -639,6 +652,7 @@ public class BleCotBridge {
 
     public void handleJsonFromWearTak(String envelopeJson) {
         try {
+            refreshIdentity();
             JSONObject env = new JSONObject(envelopeJson);
 
             String msgType = env.optString("msgType", "").trim();

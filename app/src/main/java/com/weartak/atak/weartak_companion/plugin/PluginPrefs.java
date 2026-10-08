@@ -2,6 +2,7 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import com.atakmap.android.maps.MapView;
 
@@ -12,6 +13,8 @@ import com.atakmap.android.maps.MapView;
  */
 final class PluginPrefs {
 
+    private static final String TAG = "WTK/PluginPrefs";
+
     private PluginPrefs() {}
 
     static SharedPreferences get(Context fallback, String name) {
@@ -21,7 +24,10 @@ final class PluginPrefs {
             host = mapView.getContext().getApplicationContext();
             if (host == null) host = mapView.getContext();
         }
-        if (host == null) host = fallback;
+        if (host == null) {
+            Log.w(TAG, "MapView host context unavailable; using plugin fallback context");
+            host = fallback;
+        }
         return host.getSharedPreferences(name, Context.MODE_PRIVATE);
     }
 }

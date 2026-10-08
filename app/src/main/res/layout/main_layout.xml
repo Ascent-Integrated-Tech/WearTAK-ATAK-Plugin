@@ -42,7 +42,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Try to reconnect when WearTAK closes, restarts, or disconnects unexpectedly"
+            android:text="After a successful pairing, reconnect when WearTAK closes, restarts, or disconnects unexpectedly"
             android:textSize="12sp"
             android:paddingBottom="8dp" />
 

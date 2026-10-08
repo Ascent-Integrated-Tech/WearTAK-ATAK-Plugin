@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
@@ -69,8 +70,8 @@ public class WearTakBleClient {
     private BluetoothLeScanner scanner;
 
     private volatile BluetoothGatt bluetoothGatt;
-    private BluetoothGattCharacteristic txNotifyChar; // A11B
-    private BluetoothGattCharacteristic rxWriteChar;  // A11C
+    private volatile BluetoothGattCharacteristic txNotifyChar; // A11B
+    private volatile BluetoothGattCharacteristic rxWriteChar;  // A11C
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
     private volatile DiscoveredDevice pendingBondDevice = null;
     private volatile DiscoveredDevice pendingReplacementDevice = null;
@@ -104,22 +105,21 @@ public class WearTakBleClient {
     private static final String KEY_AUTO_RECONNECT = "auto_reconnect_enabled"; // default OFF
     private static final String KEY_PREFERRED_NAME = "preferred_name";          // saved when connected
     private static final String KEY_RECONNECT_ARMED = "reconnect_armed";        // true after a session was established
-    private static final long RECONNECT_INITIAL_DELAY_MS = 2_000L;
-    private static final long RECONNECT_RETRY_DELAY_MS = 60_000L;
     private static final long RECONNECT_SCAN_WINDOW_MS = 15_000L;
     private static final long RECONNECT_CONNECT_TIMEOUT_MS = 45_000L;
     private static final long HEALTH_CHECK_INTERVAL_MS = 30_000L;
     private static final long HEALTH_CHECK_TIMEOUT_MS = 10_000L;
-    private static final String HEALTH_CHECK_REQUEST = "{\"msg_type\":\"request_settings\"}";
+    private static final String HEALTH_CHECK_MESSAGE_TYPE = "ping";
 
     private volatile boolean reconnectActive = false;
     private boolean sessionReady = false;
     private boolean awaitingHealthResponse = false;
+    private String awaitingHealthRequestId = null;
     private int missedHealthResponses = 0;
     private Runnable healthCheckRunnable = null;
     private Runnable healthTimeoutRunnable = null;
     private int reconnectAttempt = 0;
-    private int reconnectGeneration = 0;
+    private volatile int reconnectGeneration = 0;
     private Runnable reconnectRunnable = null;
     private Runnable reconnectWatchdog = null;
     private volatile DiscoveredDevice lastConnectDevice = null;
@@ -375,6 +375,10 @@ public class WearTakBleClient {
     }
 
     private synchronized void scanForDevices(final ScanListener listener, long timeoutMs) {
+        scanForDevices(listener, timeoutMs, false);
+    }
+
+    private synchronized void scanForDevices(final ScanListener listener, long timeoutMs, boolean background) {
         if (!started) start();
 
         if (bluetoothAdapter == null) {
@@ -403,7 +407,9 @@ public class WearTakBleClient {
         scanning = true;
 
         ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setScanMode(background
+                        ? ScanSettings.SCAN_MODE_LOW_POWER
+                        : ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
 
         activeScanCallback = new ScanCallback() {
@@ -425,15 +431,9 @@ public class WearTakBleClient {
                 if (!hasService) return;
 
                 String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
-                StringBuilder strippedName = new StringBuilder(displayName);
-                assert displayName != null;
-                String[] parts = displayName.split("-");
-                if (parts.length >= 2) {
-                    strippedName = new StringBuilder(parts[1]);
-                    for (int i = 2; i < parts.length; i++) strippedName.append("-").append(parts[i]);
-                }
-                Log.d(TAG, "SCAN: strippedName=(" + strippedName.toString() + "); displayName=(" + displayName + "); name=(" + name + "); advName=(" + advName + "); strippedName=(" + strippedName +")");
-                DiscoveredDevice dd = new DiscoveredDevice(strippedName.toString(), addr, rssi);
+                if (displayName == null || displayName.trim().isEmpty()) displayName = addr;
+                Log.d(TAG, "SCAN: displayName=(" + displayName + "); name=(" + name + "); advName=(" + advName + "); address=" + addr);
+                DiscoveredDevice dd = new DiscoveredDevice(displayName, addr, rssi);
 
                 discovered.put(addr, dd);
 
@@ -451,8 +451,13 @@ public class WearTakBleClient {
             }
         };
 
+        List<ScanFilter> filters = new ArrayList<>();
+        filters.add(new ScanFilter.Builder()
+                .setServiceUuid(new ParcelUuid(COMPANION_SERVICE_UUID))
+                .build());
+
         try {
-            scanner.startScan(null, settings, activeScanCallback);
+            scanner.startScan(filters, settings, activeScanCallback);
         } catch (Throwable t) {
             scanning = false;
             activeScanCallback = null;
@@ -512,6 +517,7 @@ public class WearTakBleClient {
 
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
             error("Bluetooth disabled");
+            recoverAfterManualConnectFailure("Bluetooth disabled");
             return;
         }
 
@@ -522,11 +528,13 @@ public class WearTakBleClient {
             remote = bluetoothAdapter.getRemoteDevice(device.address);
         } catch (Throwable t) {
             error("Remote device lookup failed for address=" + device.address);
+            recoverAfterManualConnectFailure("device lookup");
             return;
         }
 
         if (remote == null) {
             error("Remote device null for address=" + device.address);
+            recoverAfterManualConnectFailure("null device");
             return;
         }
 
@@ -541,11 +549,13 @@ public class WearTakBleClient {
                 bondStarted = remote.createBond();
             } catch (Throwable t) {
                 error("createBond failed: " + t.getMessage());
+                recoverAfterManualConnectFailure("bond start");
                 return;
             }
 
             if (!bondStarted && !isBonded(remote)) {
                 error("Unable to start BLE bond for " + device.address);
+                recoverAfterManualConnectFailure("bond unavailable");
                 return;
             }
 
@@ -569,6 +579,10 @@ public class WearTakBleClient {
         }
     }
 
+    private synchronized void recoverAfterManualConnectFailure(String reason) {
+        if (canAutoReconnect()) startReconnectLoop("manual connect failed: " + reason);
+    }
+
     private synchronized List<BluetoothDevice> getBondReplacementCandidates(DiscoveredDevice targetDevice) {
         List<BluetoothDevice> wearTakCandidates = new ArrayList<>();
         if (targetDevice == null || targetDevice.address == null) return wearTakCandidates;
@@ -590,14 +604,12 @@ public class WearTakBleClient {
         }
         if (bondedDevices == null || bondedDevices.isEmpty()) return wearTakCandidates;
 
-        List<BluetoothDevice> otherBondedDevices = new ArrayList<>();
         String targetName = normalizeWearTakName(targetDevice.name);
         for (BluetoothDevice bonded : bondedDevices) {
             if (bonded == null) continue;
             String address = bonded.getAddress();
             if (address == null || address.equals(targetDevice.address)) continue;
             if (!isBonded(bonded)) continue;
-            otherBondedDevices.add(bonded);
             if (!isWearTakBondCandidate(bonded)) continue;
 
             String bondedName = normalizeWearTakName(safeGetDeviceLabel(bonded));
@@ -608,12 +620,6 @@ public class WearTakBleClient {
             wearTakCandidates.add(bonded);
         }
 
-        if (!wearTakCandidates.isEmpty()) {
-            return wearTakCandidates;
-        }
-        if (otherBondedDevices.size() == 1) {
-            wearTakCandidates.add(otherBondedDevices.get(0));
-        }
         return wearTakCandidates;
     }
 
@@ -742,6 +748,7 @@ public class WearTakBleClient {
 
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
             error("Bluetooth disabled");
+            recoverAfterManualConnectFailure("Bluetooth disabled");
             return;
         }
 
@@ -753,6 +760,7 @@ public class WearTakBleClient {
         BluetoothDevice d = bluetoothAdapter.getRemoteDevice(device.address);
         if (d == null) {
             error("Remote device null for address=" + device.address);
+            recoverAfterManualConnectFailure("null device");
             return;
         }
         if (!isBonded(d)) {
@@ -760,12 +768,14 @@ public class WearTakBleClient {
                     device.address,
                     "bond_lost_before_connect",
                     "Device must be bonded before BLE connect");
+            recoverAfterManualConnectFailure("bond missing");
             return;
         }
 
         if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                 != PackageManager.PERMISSION_GRANTED) {
             error("Missing BLUETOOTH_CONNECT permission");
+            recoverAfterManualConnectFailure("permission missing");
             return;
         }
 
@@ -810,6 +820,7 @@ public class WearTakBleClient {
         healthCheckRunnable = null;
         healthTimeoutRunnable = null;
         awaitingHealthResponse = false;
+        awaitingHealthRequestId = null;
         missedHealthResponses = 0;
     }
 
@@ -823,7 +834,9 @@ public class WearTakBleClient {
     private synchronized void sendHealthCheck() {
         healthCheckRunnable = null;
         if (!sessionReady || !connected || !isAutoReconnectEnabled() || !isReconnectArmed()) return;
+        String requestId = UUID.randomUUID().toString();
         awaitingHealthResponse = true;
+        awaitingHealthRequestId = requestId;
         healthTimeoutRunnable = () -> {
             synchronized (WearTakBleClient.this) {
                 healthTimeoutRunnable = null;
@@ -838,7 +851,9 @@ public class WearTakBleClient {
             }
         };
         main.postDelayed(healthTimeoutRunnable, HEALTH_CHECK_TIMEOUT_MS);
-        if (!writeJsonLineToWatch(HEALTH_CHECK_REQUEST)) {
+        String request = "{\"msg_type\":\"" + HEALTH_CHECK_MESSAGE_TYPE
+                + "\",\"request_id\":\"" + requestId + "\"}";
+        if (!writeJsonLineToWatch(request)) {
             failSecureSession("Watch health check could not be sent", "health_check_send_failed");
         }
     }
@@ -847,12 +862,13 @@ public class WearTakBleClient {
         if (!awaitingHealthResponse) return false;
         try {
             JSONObject env = new JSONObject(line);
-            if (!"settings_request".equals(env.optString("msgType", ""))
-                    || env.optJSONObject("payload") == null) return false;
+            if (!"pong".equals(env.optString("msgType", ""))) return false;
+            if (!env.optString("request_id", "").equals(awaitingHealthRequestId)) return false;
         } catch (org.json.JSONException e) {
             return false;
         }
         awaitingHealthResponse = false;
+        awaitingHealthRequestId = null;
         missedHealthResponses = 0;
         if (healthTimeoutRunnable != null) main.removeCallbacks(healthTimeoutRunnable);
         healthTimeoutRunnable = null;
@@ -894,6 +910,8 @@ public class WearTakBleClient {
         SharedPreferences.Editor e = prefs().edit().putBoolean(KEY_RECONNECT_ARMED, true);
         if (name != null && !name.trim().isEmpty()) {
             e.putString(KEY_PREFERRED_NAME, name.trim());
+        } else {
+            e.remove(KEY_PREFERRED_NAME);
         }
         e.apply();
     }
@@ -947,7 +965,7 @@ public class WearTakBleClient {
         if (!reconnectActive) return;
         clearReconnectCallbacks();
         final int gen = ++reconnectGeneration;
-        long delay = reconnectAttempt == 0 ? RECONNECT_INITIAL_DELAY_MS : RECONNECT_RETRY_DELAY_MS;
+        long delay = ReconnectPolicy.delayForAttempt(reconnectAttempt);
         reconnectAttempt++;
         logI("Auto-reconnect attempt #" + reconnectAttempt + " in " + delay + "ms (" + reason + ")");
         reconnectRunnable = () -> runReconnectAttempt(gen);
@@ -1001,6 +1019,10 @@ public class WearTakBleClient {
         }
 
         final DiscoveredDevice target = loadReconnectTarget();
+        if (target == null) {
+            cancelReconnectLoop("preferred device cleared");
+            return;
+        }
         final String targetName = normalizeWearTakName(target.name);
         final AtomicBoolean issued = new AtomicBoolean(false);
         logI("Auto-reconnect scanning for " + target);
@@ -1037,7 +1059,7 @@ public class WearTakBleClient {
                 }
                 scheduleNextReconnect("scan error: " + msg);
             }
-        }, RECONNECT_SCAN_WINDOW_MS);
+        }, RECONNECT_SCAN_WINDOW_MS, true);
     }
 
     /** Exact address first; otherwise the strongest already-bonded device advertising the same WearTAK name. */
@@ -1288,7 +1310,7 @@ public class WearTakBleClient {
                 synchronized (WearTakBleClient.this) {
                     if (!started || bluetoothAdapter == null) return;
                     scanner = bluetoothAdapter.getBluetoothLeScanner();
-                    if (!connected && bluetoothGatt != null && canAutoReconnect()) {
+                    if (!connected && bluetoothGatt != null) {
                         // Stale handle from before the adapter cycled.
                         closeGattInternal("Bluetooth restarted");
                     }
@@ -1417,14 +1439,12 @@ public class WearTakBleClient {
             if (gatt != bluetoothGatt) return;
             if (descriptor == null) return;
             if (!CCCD_UUID.equals(descriptor.getUuid())) return;
+            if (descriptor.getCharacteristic() != txNotifyChar) return;
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 BluetoothDevice device = gatt.getDevice();
                 if (device != null && device.getAddress() != null) {
                     savePreferredAddress(device.getAddress());
-                    DiscoveredDevice last = lastConnectDevice;
-                    boolean sameDevice = last != null && device.getAddress().equals(last.address);
-                    armReconnect(sameDevice ? last.name : null);
                 }
                 onReconnectSessionReady();
                 synchronized (WearTakBleClient.this) {
@@ -1485,27 +1505,40 @@ public class WearTakBleClient {
     };
 
     private void handleJsonLine(String line) {
-        if (handleHealthResponse(line)) return;
+        handleHealthResponse(line);
         JsonListener l = jsonListener.get();
-        if (l != null) l.onJson(line);
-
-        // existing pairing support
         try {
             JSONObject env = new JSONObject(line);
             String msgType = env.optString("msgType", "");
-            if (!"watch_info".equals(msgType)) return;
+            if (!"watch_info".equals(msgType)) {
+                if (l != null) l.onJson(line);
+                return;
+            }
 
             JSONObject p = env.optJSONObject("payload");
-            if (p == null) return;
+            if (p == null) {
+                if (l != null) l.onJson(line);
+                return;
+            }
 
             String uid = p.optString("uid", "");
             String cs  = p.optString("cs", "");
 
             if (uid != null && !uid.isEmpty()) {
+                String previousUid = getPairedUid();
+                if (previousUid != null && !previousUid.isEmpty() && !previousUid.equals(uid)) {
+                    handleTrustLoss(currentGattAddress(), "watch_uid_mismatch", "Connected watch identity changed");
+                    return;
+                }
                 savePairedUid(uid, cs);
+                DiscoveredDevice last = lastConnectDevice;
+                armReconnect(last == null ? null : last.name);
                 if (l != null) l.onPaired(uid, cs);
             }
-        } catch (Throwable ignored) { }
+            if (l != null) l.onJson(line);
+        } catch (Throwable ignored) {
+            if (l != null) l.onJson(line);
+        }
     }
 
     // -------------------- pairing storage --------------------
@@ -1649,11 +1682,7 @@ public class WearTakBleClient {
     }
 
     private String normalizeWearTakName(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        if (trimmed.isEmpty()) return null;
-        if (trimmed.startsWith("WT-")) trimmed = trimmed.substring(3);
-        return trimmed.trim().isEmpty() ? null : trimmed.trim();
+        return ReconnectPolicy.normalizeDeviceName(value);
     }
 
     private synchronized void finishPendingBondReplacement(String reason) {
