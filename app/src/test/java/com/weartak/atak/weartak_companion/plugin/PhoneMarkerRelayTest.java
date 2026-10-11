@@ -9,6 +9,45 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class PhoneMarkerRelayTest {
+    @Test public void incomingDeletionUsesOnlyLocalRemovalAndCannotDispatchEchoOrNetworkDelete() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "shared-revision", 7);
+        relay.watchImported(marker("watch"));
+        List<String> operations = new ArrayList<>();
+        assertTrue(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> {
+            operations.add("local removeFromGroup");
+            try {
+                // ATAK emits ITEM_REMOVED synchronously during local map removal.
+                assertFalse(relay.forwardDeletion(marker("watch"), 7, (json, session) -> {
+                    operations.add("outbound BLE deletion");
+                    return true;
+                }));
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+            relay.removed("phone");
+            return true;
+        }));
+        assertEquals(java.util.Collections.singletonList("local removeFromGroup"), operations);
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> {
+            fail("Duplicate must not invoke local removal");
+            return true;
+        }));
+    }
+
+    @Test public void changedOrEndedSessionNeverInvokesLocalDeletionAndRemovalFailureDoesNotEcho() {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "shared-revision", 7);
+        relay.watchImported(marker("watch"));
+        PhoneMarkerRelay.LocalRemoval failIfCalled = () -> {
+            fail("Unrelated/newer points and old sessions must survive");
+            return true;
+        };
+        assertFalse(relay.applyLocalDeletion(marker("phone edit"), "shared-revision", 7, failIfCalled));
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 8, failIfCalled));
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> false));
+        assertTrue(relay.acceptsDeletion(marker("watch"), "shared-revision", 7));
+    }
     @Test public void phoneDeletionRequiresSharedUnchangedRevisionAndCurrentSession() throws Exception {
         PhoneMarkerRelay relay = new PhoneMarkerRelay();
         List<String> writes = new ArrayList<>();

@@ -14,6 +14,10 @@ final class PhoneMarkerRelay {
         boolean write(String envelope, long session);
     }
 
+    interface LocalRemoval {
+        boolean remove();
+    }
+
     static final class Snapshot {
         final String uid;
         final String fingerprint;
@@ -52,6 +56,7 @@ final class PhoneMarkerRelay {
         }
     }
     private final Map<String, Revision> revisions = new HashMap<>();
+    private String incomingDeletionUid;
 
     static boolean validToken(String token) {
         return token != null && token.matches("[a-zA-Z0-9-]{1,64}");
@@ -129,6 +134,7 @@ final class PhoneMarkerRelay {
     synchronized boolean forwardDeletion(Snapshot marker, long readySession, Writer writer)
             throws JSONException {
         if (marker == null || !marker.valid || readySession < 0) return false;
+        if (marker.uid.equals(incomingDeletionUid)) return false;
         Revision revision = revisions.get(marker.uid);
         if (revision == null || revision.session != readySession
                 || !revision.fingerprint.equals(marker.fingerprint)) return false;
@@ -142,6 +148,20 @@ final class PhoneMarkerRelay {
         Revision revision = revisions.get(marker.uid);
         return revision != null && revision.session == readySession && token.equals(revision.token)
                 && revision.fingerprint.equals(marker.fingerprint);
+    }
+
+    /** The only supplied operation is local map removal, never a CoT/network dispatcher. */
+    synchronized boolean applyLocalDeletion(Snapshot marker, String token, long readySession,
+                                            LocalRemoval removal) {
+        if (!acceptsDeletion(marker, token, readySession)) return false;
+        incomingDeletionUid = marker.uid;
+        try {
+            boolean removed = removal.remove();
+            if (removed) removed(marker.uid);
+            return removed;
+        } finally {
+            incomingDeletionUid = null;
+        }
     }
 
     synchronized void removed(String uid) {

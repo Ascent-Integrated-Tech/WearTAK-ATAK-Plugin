@@ -184,6 +184,12 @@ delivery acknowledgement; asynchronous GATT failures remain reported as errors.
 
 ### WEARTAK-112: explicit shared-point deletion
 
+**Local paired-device mirrors only.** Watch deletion removes only the eligible
+local phone map copy; phone local deletion echoes only to the eligible paired-watch
+copy. No deletion is sent to TAK servers, multicast, Ditto, SITX, plugins/mesh, or
+other devices. Incoming mirrored removal cannot re-echo. Watch Clear/Last/All is
+immediate local removal even without BLE and no longer generates network clear CoT.
+
 ATAK 5.5.1.8 SDK inspection shows that local
 `MapItemDeleteReceiver` calls `removeFromGroup()`. `CotEventFactory` does not
 turn removed items into expired events; its default marker exporter creates
@@ -216,7 +222,7 @@ For watch-origin points, the original local point is also removed unless a local
 edit is pending. Watch received-marker Delete retains its existing UID-wide local
 UX, but relays only a selected companion-source point. Bloodhound menu dismissal
 is not point deletion. Legacy stale BLE marker clears are no longer imported as
-fresh markers; ordinary network clears retain their existing behavior.
+fresh markers; watch point deletion never generates a network clear.
 
 There is no fabricated expiry, network deletion broadcast, ACK, offline replay,
 bulk sync, or deletion on disconnect. Transport enqueue is not delivery confirmation.
@@ -226,7 +232,12 @@ authorization token. Validate both directions on paired hardware before deployme
 Validation: `PhoneMarkerRelayTest` exercises the production forwarding policy,
 exact envelope/XML preservation, create/update deduplication, filtering,
 watch-echo release, disconnect/session rejection, removal/stop state, and write
-failures. These JVM tests do not establish ATAK/BLE hardware end-to-end behavior.
+failures. The production local-removal policy is also exercised with synchronous
+removal events to verify that incoming deletion invokes only local removal and
+cannot emit a BLE echo. SDK `javap` inspection confirms `MapItem.removeFromGroup`
+delegates to local `MapGroup.removeItem`, not a CoT dispatcher/importer. These JVM
+tests do not establish ATAK/BLE hardware end-to-end behavior or side effects from
+unrelated installed plugins.
 Paired-device acceptance should include move/title/detail edits, watch-origin
 edits, unsupported PLI/emergency/shape items, disconnect/watch switching, and
 plugin stop/start. Specifically, create a phone point and start watch Bloodhound,
@@ -236,4 +247,6 @@ ATAK marker/tracking removal. Edit that watch-origin point in ATAK and repeat bo
 directions. A same-UID TAK copy on the watch must survive phone deletion. Replay an
 old deletion after a newer edit or reconnect: newer/unshared points must survive,
 without echo deletion or startup replay. These are pending hardware acceptance
-checks, not claims of device validation.
+checks, not claims of device validation. With a third TAK/network peer displaying
+the same point, delete on either paired device and verify that third peer retains
+its copy and receives no deletion packet.

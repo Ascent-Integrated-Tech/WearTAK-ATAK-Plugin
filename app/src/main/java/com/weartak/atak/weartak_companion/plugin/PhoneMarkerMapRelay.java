@@ -16,8 +16,6 @@ import com.atakmap.coremap.cot.event.CotPoint;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
-import java.util.Collections;
-import java.util.Set;
 import org.json.JSONObject;
 import org.json.JSONException;
 
@@ -30,7 +28,6 @@ final class PhoneMarkerMapRelay {
     private final PhoneMarkerRelay policy;
     private final WearTakBleClient client;
     private final Map<Marker, Runnable> markers = new IdentityHashMap<>();
-    private final Set<MapItem> remoteRemovals = Collections.newSetFromMap(new IdentityHashMap<>());
     private final PointMapItem.OnPointChangedListener pointListener = item -> changed(item);
     private final MapItem.OnMetadataChangedListener metadataListener = (item, key) -> changed(item);
     private final MapItem.OnTypeChangedListener typeListener = this::changed;
@@ -75,14 +72,12 @@ final class PhoneMarkerMapRelay {
         if (!(item instanceof Marker)) return;
         if (MapEvent.ITEM_REMOVED.equals(event.getType())) {
             try {
-                if (!remoteRemovals.contains(item)) {
-                    policy.forwardDeletion(snapshot(item), client.getReadySession(),
+                policy.forwardDeletion(snapshot(item), client.getReadySession(),
                             (json, session) -> {
                                 boolean written = client.writeJsonLineToWatch(json, session);
                                 if (!written) Log.w(TAG, "Point deletion write rejected");
                                 return written;
                             });
-                }
             } catch (JSONException | RuntimeException e) {
                 Log.e(TAG, "Point deletion export failed", e);
             }
@@ -103,53 +98,49 @@ final class PhoneMarkerMapRelay {
     }
 
     boolean receiveDeletion(String json) {
-            final JSONObject payload;
-            final String uid, token;
-            try {
-                payload = new JSONObject(json).optJSONObject("payload");
-                Object target = payload == null ? null : payload.opt("targetUid");
-                Object revision = payload == null ? null : payload.opt("revision");
-                if (!(target instanceof String) || !(revision instanceof String)
-                        || ((String) target).trim().isEmpty() || ((String) target).length() > 256
-                        || !PhoneMarkerRelay.validToken((String) revision)) {
-                    Log.w(TAG, "Ignoring invalid point deletion");
-                    return false;
-                }
-                uid = (String) target;
-                token = (String) revision;
-            } catch (JSONException e) {
-                Log.w(TAG, "Ignoring invalid point deletion JSON", e);
+        final JSONObject payload;
+        final String uid, token;
+        try {
+            payload = new JSONObject(json).optJSONObject("payload");
+            Object target = payload == null ? null : payload.opt("targetUid");
+            Object revision = payload == null ? null : payload.opt("revision");
+            if (!(target instanceof String) || !(revision instanceof String)
+                    || ((String) target).trim().isEmpty() || ((String) target).length() > 256
+                    || !PhoneMarkerRelay.validToken((String) revision)) {
+                Log.w(TAG, "Ignoring invalid point deletion");
                 return false;
             }
-            final long session = client.getReadySession();
-            handler.post(() -> {
-                synchronized (PhoneMarkerMapRelay.this) {
-                    if (mapView == null || session < 0 || session != client.getReadySession()) {
-                        Log.w(TAG, "Ignoring point deletion from ended/unready connection");
+            uid = (String) target;
+            token = (String) revision;
+        } catch (JSONException e) {
+            Log.w(TAG, "Ignoring invalid point deletion JSON", e);
+            return false;
+        }
+        final long session = client.getReadySession();
+        handler.post(() -> {
+            synchronized (PhoneMarkerMapRelay.this) {
+                if (mapView == null || session < 0 || session != client.getReadySession()) {
+                    Log.w(TAG, "Ignoring point deletion from ended/unready connection");
+                    return;
+                }
+                MapItem item = mapView.getRootGroup().deepFindUID(uid);
+                try {
+                    if (!(item instanceof Marker) || !markers.containsKey(item)
+                            || !policy.acceptsDeletion(snapshot(item), token, session)) {
+                        Log.d(TAG, "Point deletion ignored: unknown or changed revision");
                         return;
                     }
-                    MapItem item = mapView.getRootGroup().deepFindUID(uid);
-                    try {
-                        if (!(item instanceof Marker) || !markers.containsKey(item)
-                                || !policy.acceptsDeletion(snapshot(item), token, session)) {
-                            Log.d(TAG, "Point deletion ignored: unknown or changed revision");
-                            return;
-                        }
-                        remoteRemovals.add(item);
-                        try {
-                            boolean removed = item.removeFromGroup();
-                            if (removed) policy.removed(uid);
-                            Log.d(TAG, "Point deletion applied=" + removed);
-                        } finally {
-                            remoteRemovals.remove(item);
-                        }
-                    } catch (RuntimeException e) {
-                        Log.e(TAG, "Point deletion application failed", e);
-                    }
+                    boolean removed = policy.applyLocalDeletion(snapshot(item), token, session,
+                            item::removeFromGroup);
+                    Log.d(TAG, "Point deletion applied=" + removed);
+                } catch (RuntimeException e) {
+                    Log.e(TAG, "Point deletion application failed", e);
                 }
-            });
-            return true;
-        }
+            }
+        });
+        return true;
+    }
+
     private void attach(MapItem item) {
         if (!(item instanceof Marker) || markers.containsKey(item)) return;
         Marker marker = (Marker) item;
