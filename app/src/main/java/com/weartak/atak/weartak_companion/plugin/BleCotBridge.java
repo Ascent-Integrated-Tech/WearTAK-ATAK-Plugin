@@ -4,8 +4,10 @@ import static com.atakmap.android.maps.MapView.getMapView;
 import static com.atakmap.android.user.icon.Icon2525cPallet.COT_MAPPING_2525C;
 
 import android.os.Build;
+import android.os.Bundle;
 import android.util.Log;
 
+import com.atakmap.android.chat.ChatManagerMapComponent;
 import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
@@ -32,6 +34,10 @@ public class BleCotBridge {
     private String myUid;
     private String pluginCallsign;
     private Boolean watchAsSource = false;
+    private volatile WearTakBleClient bleClient;
+    private ChatManagerMapComponent chatManager;
+    private final ChatManagerMapComponent.ChatMessageListener chatMessageListener =
+            this::forwardChatToWatch;
 
     public BleCotBridge() {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
@@ -40,6 +46,68 @@ public class BleCotBridge {
         myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
         pluginCallsign = mapView.getDeviceCallsign();  // cs of eud
         Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
+    }
+
+    public synchronized void startChatForwarding(WearTakBleClient client) {
+        bleClient = client;
+        if (chatManager != null) return;
+
+        chatManager = ChatManagerMapComponent.getInstance();
+        if (chatManager == null) {
+            Log.w(TAG, "startChatForwarding: ATAK chat manager is unavailable");
+            return;
+        }
+        chatManager.addChatMessageListener(chatMessageListener);
+        Log.i(TAG, "ATAK chat forwarding listener registered");
+    }
+
+    public synchronized void stopChatForwarding() {
+        if (chatManager != null) {
+            chatManager.removeChatMessageListener(chatMessageListener);
+            chatManager = null;
+        }
+        bleClient = null;
+    }
+
+    private void forwardChatToWatch(Bundle message) {
+        if (message == null) return;
+        String senderUid = message.getString("senderUid");
+        String messageId = message.getString("messageId");
+        String senderCallsign = message.getString("senderCallsign");
+        String text = message.getString("message");
+        if (senderUid == null || senderUid.isEmpty()
+                || senderUid.equals(myUid)
+                || messageId == null || messageId.isEmpty()
+                || senderCallsign == null || senderCallsign.isEmpty()
+                || text == null || text.isEmpty()) {
+            return;
+        }
+
+        WearTakBleClient client = bleClient;
+        if (client == null) return;
+
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("uid", messageId);
+            payload.put("senderUid", senderUid);
+            payload.put("senderCallsign", senderCallsign);
+            payload.put("msg", text);
+            payload.put("receivedAt", message.getLong("receiveTime", System.currentTimeMillis()));
+            payload.put("conversationUid", message.getString("conversationId", ""));
+            payload.put("conversationTitle", message.getString("conversationName", ""));
+
+            JSONObject envelope = new JSONObject();
+            envelope.put("vers", 1);
+            envelope.put("msgType", "chat_received");
+            envelope.put("msgUid", messageId);
+            envelope.put("src", "atak");
+            envelope.put("payload", payload);
+            if (!client.writeJsonLineToWatch(envelope.toString())) {
+                Log.w(TAG, "Could not relay ATAK chat message to watch");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to relay ATAK chat message to watch", e);
+        }
     }
 
     // =========================================================================================
@@ -474,16 +542,14 @@ public class BleCotBridge {
             //   dstUid      = roomUid
             //   dstChatroom = roomTitle
             //
-            String dstUid      = optString(p, "roomUid", "All Chat Rooms");
-            String dstChatroom = optString(p, "roomTitle", dstUid);
+            String dstUid      = optString(p, "rmUid", optString(p, "roomUid", "All Chat Rooms"));
+            String dstChatroom = optString(p, "rmTitle", optString(p, "roomTitle", dstUid));
 
             // Message text
             String chatMsg = optString(p, "msg", "");
 
-            // Sender callsign comes from payload.cs in your earlier watch examples
-            // (Your stub used "cs", not "callsign".)
-            String senderCallsign = optString(p, "cs",
-                    optString(p, "callsign", "WEAROS-TEST"));
+            // Attribute watch-originated messages to the paired phone in ATAK.
+            String senderCallsign = pluginCallsign;
 
             // Time/stale fields match your watch schema
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
