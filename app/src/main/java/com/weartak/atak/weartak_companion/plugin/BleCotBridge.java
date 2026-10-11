@@ -244,6 +244,10 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
+            if (Instant.parse(stale).toEpochMilli() <= System.currentTimeMillis()) {
+                Log.w(TAG, "Ignoring legacy stale BLE marker; explicit point deletion required");
+                return;
+            }
             String title = optString(p, "title", "");
 
             // Point fields (marker payload has these)
@@ -347,6 +351,12 @@ public class BleCotBridge {
                             + "<detail>" + detail + "</detail>"
                             + "</event>";
 
+            PhoneMarkerRelay policy = phoneMarkerPolicy;
+            WearTakBleClient client = bleClient;
+            if (policy != null && client != null) {
+                policy.watchImportStarted(markerUid, System.currentTimeMillis(),
+                        p.optString("revision", ""), client.getReadySession());
+            }
             dispatchCot("MARKER", xml);
 
         } catch (Exception e) {

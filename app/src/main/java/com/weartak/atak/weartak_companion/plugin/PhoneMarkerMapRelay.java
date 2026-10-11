@@ -16,6 +16,8 @@ import com.atakmap.coremap.cot.event.CotPoint;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
+import org.json.JSONObject;
+import org.json.JSONException;
 
 final class PhoneMarkerMapRelay {
     static final String WATCH_IMPORT = "weartak_watch_marker";
@@ -43,14 +45,20 @@ final class PhoneMarkerMapRelay {
         if (view == null || view.getMapEventDispatcher() == null) return;
         mapView = view;
         dispatcher = view.getMapEventDispatcher();
-        for (String event : EVENTS) dispatcher.addMapEventListener(event, eventListener);
+        for (String event : EVENTS) {
+            if (MapEvent.ITEM_REMOVED.equals(event)) dispatcher.addMapEventListenerToBase(event, eventListener);
+            else dispatcher.addMapEventListener(event, eventListener);
+        }
         // Observe existing points for future edits; never send a startup snapshot.
         for (MapItem item : view.getRootGroup().getItemsRecursive()) attach(item);
     }
 
     synchronized void stop() {
         if (dispatcher != null) {
-            for (String event : EVENTS) dispatcher.removeMapEventListener(event, eventListener);
+            for (String event : EVENTS) {
+                if (MapEvent.ITEM_REMOVED.equals(event)) dispatcher.removeMapEventListenerFromBase(event, eventListener);
+                else dispatcher.removeMapEventListener(event, eventListener);
+            }
         }
         for (Marker marker : markers.keySet().toArray(new Marker[0])) detach(marker);
         dispatcher = null;
@@ -63,11 +71,21 @@ final class PhoneMarkerMapRelay {
         MapItem item = event.getItem();
         if (!(item instanceof Marker)) return;
         if (MapEvent.ITEM_REMOVED.equals(event.getType())) {
+            try {
+                policy.forwardDeletion(snapshot(item), client.getReadySession(),
+                            (json, session) -> {
+                                boolean written = client.writeJsonLineToWatch(json, session);
+                                if (!written) Log.w(TAG, "Point deletion write rejected");
+                                return written;
+                            });
+            } catch (JSONException | RuntimeException e) {
+                Log.e(TAG, "Point deletion export failed", e);
+            }
             detach((Marker) item);
             policy.removed(item.getUID());
-            // ATAK removal is local; its t-x-d-d delete task is not the watch marker contract.
             return;
         }
+
         attach(item);
         if (event.getExtras() != null && event.getExtras().getBoolean(WATCH_IMPORT, false)) {
             try {
@@ -77,6 +95,50 @@ final class PhoneMarkerMapRelay {
             }
         }
         changed(item);
+    }
+
+    boolean receiveDeletion(String json) {
+        final JSONObject payload;
+        final String uid, token;
+        try {
+            payload = new JSONObject(json).optJSONObject("payload");
+            Object target = payload == null ? null : payload.opt("targetUid");
+            Object revision = payload == null ? null : payload.opt("revision");
+            if (!(target instanceof String) || !(revision instanceof String)
+                    || ((String) target).trim().isEmpty() || ((String) target).length() > 256
+                    || !PhoneMarkerRelay.validToken((String) revision)) {
+                Log.w(TAG, "Ignoring invalid point deletion");
+                return false;
+            }
+            uid = (String) target;
+            token = (String) revision;
+        } catch (JSONException e) {
+            Log.w(TAG, "Ignoring invalid point deletion JSON", e);
+            return false;
+        }
+        final long session = client.getReadySession();
+        handler.post(() -> {
+            synchronized (PhoneMarkerMapRelay.this) {
+                if (mapView == null || session < 0 || session != client.getReadySession()) {
+                    Log.w(TAG, "Ignoring point deletion from ended/unready connection");
+                    return;
+                }
+                MapItem item = mapView.getRootGroup().deepFindUID(uid);
+                try {
+                    if (!(item instanceof Marker) || !markers.containsKey(item)
+                            || !policy.acceptsDeletion(snapshot(item), token, session)) {
+                        Log.d(TAG, "Point deletion ignored: unknown or changed revision");
+                        return;
+                    }
+                    boolean removed = policy.applyLocalDeletion(snapshot(item), token, session,
+                            item::removeFromGroup);
+                    Log.d(TAG, "Point deletion applied=" + removed);
+                } catch (RuntimeException e) {
+                    Log.e(TAG, "Point deletion application failed", e);
+                }
+            }
+        });
+        return true;
     }
 
     private void attach(MapItem item) {

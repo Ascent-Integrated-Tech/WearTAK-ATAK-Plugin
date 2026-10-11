@@ -9,6 +9,92 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class PhoneMarkerRelayTest {
+    @Test public void incomingDeletionUsesOnlyLocalRemovalAndCannotDispatchEchoOrNetworkDelete() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "shared-revision", 7);
+        relay.watchImported(marker("watch"));
+        List<String> operations = new ArrayList<>();
+        assertTrue(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> {
+            operations.add("local removeFromGroup");
+            try {
+                // ATAK emits ITEM_REMOVED synchronously during local map removal.
+                assertFalse(relay.forwardDeletion(marker("watch"), 7, (json, session) -> {
+                    operations.add("outbound BLE deletion");
+                    return true;
+                }));
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+            relay.removed("phone");
+            return true;
+        }));
+        assertEquals(java.util.Collections.singletonList("local removeFromGroup"), operations);
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> {
+            fail("Duplicate must not invoke local removal");
+            return true;
+        }));
+    }
+
+    @Test public void changedOrEndedSessionNeverInvokesLocalDeletionAndRemovalFailureDoesNotEcho() {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "shared-revision", 7);
+        relay.watchImported(marker("watch"));
+        PhoneMarkerRelay.LocalRemoval failIfCalled = () -> {
+            fail("Unrelated/newer points and old sessions must survive");
+            return true;
+        };
+        assertFalse(relay.applyLocalDeletion(marker("phone edit"), "shared-revision", 7, failIfCalled));
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 8, failIfCalled));
+        assertFalse(relay.applyLocalDeletion(marker("watch"), "shared-revision", 7, () -> false));
+        assertTrue(relay.acceptsDeletion(marker("watch"), "shared-revision", 7));
+    }
+    @Test public void phoneDeletionRequiresSharedUnchangedRevisionAndCurrentSession() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        List<String> writes = new ArrayList<>();
+        assertFalse(relay.forwardDeletion(marker("initial"), 7, (json, session) -> writes.add(json)));
+        relay.forward(marker("initial"), 7, 7, 0, (json, session) -> writes.add(json));
+        String token = new JSONObject(writes.get(0)).getJSONObject("payload").getString("revision");
+        assertTrue(relay.acceptsDeletion(marker("initial"), token, 7));
+        assertFalse(relay.acceptsDeletion(marker("edited before export"), token, 7));
+        assertFalse(relay.acceptsDeletion(marker("initial"), token, 8));
+        assertFalse(relay.forwardDeletion(marker("edited before export"), 7, (json, session) -> true));
+        assertTrue(relay.forwardDeletion(marker("initial"), 7, (json, session) -> writes.add(json)));
+        JSONObject deletion = new JSONObject(writes.get(1));
+        assertEquals("marker_delete", deletion.getString("msg_type"));
+        assertEquals("phone", deletion.getJSONObject("payload").getString("targetUid"));
+        assertEquals(token, deletion.getJSONObject("payload").getString("revision"));
+        relay.removed("phone");
+        assertFalse(relay.acceptsDeletion(marker("initial"), token, 7));
+        assertFalse(relay.forwardDeletion(marker("initial"), 7, (json, session) -> true));
+    }
+
+    @Test public void watchImportDeletionAndPhoneEditSupersedeOldTokenWithoutEcho() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "watch-revision", 7);
+        relay.watchImported(marker("watch"));
+        assertTrue(relay.acceptsDeletion(marker("watch"), "watch-revision", 7));
+        assertFalse(relay.forward(marker("watch"), 7, 7, 1, (json, session) -> true));
+        assertTrue(relay.forwardDeletion(marker("watch"), 7, (json, session) -> true));
+        assertTrue(relay.forward(marker("edited"), 7, 7, 2, (json, session) -> true));
+        assertFalse(relay.acceptsDeletion(marker("edited"), "watch-revision", 7));
+        assertFalse(relay.acceptsDeletion(marker("watch"), "watch-revision", 7));
+        relay.clear();
+        assertFalse(relay.acceptsDeletion(marker("edited"), "watch-revision", 7));
+    }
+
+    @Test public void unsupportedUnsharedMalformedAndRejectedDeletesAreInert() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "watch-revision", 7);
+        relay.watchImported(marker("watch"));
+        assertFalse(relay.acceptsDeletion(marker("watch"), "", 7));
+        assertFalse(relay.acceptsDeletion(marker("watch"), "bad\nrevision", 7));
+        assertFalse(relay.forwardDeletion(marker("watch"), -1, (json, session) -> true));
+        assertFalse(relay.forwardDeletion(marker("watch"), 7, (json, session) -> false));
+        assertTrue(relay.acceptsDeletion(marker("watch"), "watch-revision", 7));
+        assertFalse(relay.acceptsDeletion(
+                snapshot("phone", "b-a", 38, -77, 0, 1, 1, 1, 1, 2, false, "watch"),
+                "watch-revision", 7));
+    }
     private static final String XML = "<event uid='phone' type='a-f-G' time='2026-10-10T12:00:00Z' "
             + "start='2026-10-10T12:00:00Z' stale='2026-10-10T12:02:00Z'>"
             + "<point lat='38' lon='-77' hae='0' ce='9999999' le='9999999'/>"
