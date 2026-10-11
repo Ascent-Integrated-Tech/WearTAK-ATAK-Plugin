@@ -63,6 +63,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private WearTakBleClient bleClient;
     private BleCotBridge bleCotBridge;
+    private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
+    private PhoneMarkerMapRelay phoneMarkerRelay;
     private CotServiceRemote cotServiceRemote;
     private final PhoneEmergencyRelay phoneEmergencyRelay = new PhoneEmergencyRelay();
     private final BroadcastReceiver phoneEmergencyReceiver = new BroadcastReceiver() {
@@ -334,6 +336,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             Log.i(TAG, "BleCotBridge initialized in plugin");
         }
 
+        registerMapItemListener();
         bleClient.start();
 
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
@@ -452,9 +455,23 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     @Override
     public void onStop() {
+        unregisterMapItemListener();
         stopPhoneAlertForwarding();
         if (bleCotBridge != null) bleCotBridge.stopChatForwarding();
         if (bleClient != null) bleClient.stop();
+    }
+
+    private void registerMapItemListener() {
+        unregisterMapItemListener();
+        if (bleClient == null) return;
+        bleCotBridge.setPhoneMarkerPolicy(phoneMarkerPolicy);
+        phoneMarkerRelay = new PhoneMarkerMapRelay(phoneMarkerPolicy, bleClient);
+        phoneMarkerRelay.start(MapView.getMapView());
+    }
+
+    private void unregisterMapItemListener() {
+        if (phoneMarkerRelay != null) phoneMarkerRelay.stop();
+        phoneMarkerRelay = null;
     }
 
     private void startPhoneAlertForwarding() {
