@@ -403,10 +403,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
         });
+
+        bleCotBridge.startChatForwarding(bleClient);
     }
 
     @Override
     public void onStop() {
+        if (bleCotBridge != null) bleCotBridge.stopChatForwarding();
         if (bleClient != null) bleClient.stop();
     }
 
