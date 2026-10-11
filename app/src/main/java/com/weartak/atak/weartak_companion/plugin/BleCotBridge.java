@@ -20,7 +20,9 @@ import org.json.JSONObject;
 
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 public class BleCotBridge {
@@ -34,6 +36,7 @@ public class BleCotBridge {
     private String myUid;
     private String pluginCallsign;
     private Boolean watchAsSource = false;
+    private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
     private volatile WearTakBleClient bleClient;
     private ChatManagerMapComponent chatManager;
     private final ChatManagerMapComponent.ChatMessageListener chatMessageListener =
@@ -69,39 +72,21 @@ public class BleCotBridge {
         bleClient = null;
     }
 
-    private void forwardChatToWatch(Bundle message) {
+    private synchronized void forwardChatToWatch(Bundle message) {
         if (message == null) return;
         String senderUid = message.getString("senderUid");
         String messageId = message.getString("messageId");
         String senderCallsign = message.getString("senderCallsign");
         String text = message.getString("message");
-        if (senderUid == null || senderUid.isEmpty()
-                || senderUid.equals(myUid)
-                || messageId == null || messageId.isEmpty()
-                || senderCallsign == null || senderCallsign.isEmpty()
-                || text == null || text.isEmpty()) {
-            return;
-        }
 
         WearTakBleClient client = bleClient;
         if (client == null) return;
 
         try {
-            JSONObject payload = new JSONObject();
-            payload.put("uid", messageId);
-            payload.put("senderUid", senderUid);
-            payload.put("senderCallsign", senderCallsign);
-            payload.put("msg", text);
-            payload.put("receivedAt", message.getLong("receiveTime", System.currentTimeMillis()));
-            payload.put("conversationUid", message.getString("conversationId", ""));
-            payload.put("conversationTitle", message.getString("conversationName", ""));
-
-            JSONObject envelope = new JSONObject();
-            envelope.put("vers", 1);
-            envelope.put("msgType", "chat_received");
-            envelope.put("msgUid", messageId);
-            envelope.put("src", "atak");
-            envelope.put("payload", payload);
+            JSONObject envelope = ChatRelayPayloadBuilder.build(myUid, senderUid, messageId,
+                    senderCallsign, text, message.getLong("receiveTime", System.currentTimeMillis()),
+                    message.getString("conversationId", ""), message.getString("conversationName", ""));
+            if (envelope == null) return;
             if (!client.writeJsonLineToWatch(envelope.toString())) {
                 Log.w(TAG, "Could not relay ATAK chat message to watch");
             }
@@ -390,6 +375,23 @@ public class BleCotBridge {
         }
     }
 
+    public boolean isWatchOriginEmergency(String uid) {
+        if (uid == null) return false;
+        synchronized (watchEmergencyUids) {
+            return watchEmergencyUids.contains(uid);
+        }
+    }
+
+    private void rememberWatchEmergencyUid(String uid) {
+        if (uid == null || uid.isEmpty()) return;
+        synchronized (watchEmergencyUids) {
+            watchEmergencyUids.add(uid);
+            while (watchEmergencyUids.size() > 256) {
+                watchEmergencyUids.remove(watchEmergencyUids.iterator().next());
+            }
+        }
+    }
+
     public void sendEmergencyAlert(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
@@ -459,6 +461,7 @@ public class BleCotBridge {
                             + detail
                             + "</event>";
 
+            rememberWatchEmergencyUid(uid);
             dispatchCot("Emergency ALERT", xml);
 
         } catch (Exception e) {
@@ -496,6 +499,7 @@ public class BleCotBridge {
                             + "</detail>"
                             + "</event>";
 
+            rememberWatchEmergencyUid(uid);
             dispatchCot("Emergency CANCEL", xml);
 
         } catch (Exception e) {
