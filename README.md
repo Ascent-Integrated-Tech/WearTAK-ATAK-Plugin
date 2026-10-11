@@ -182,18 +182,46 @@ Queued BLE chunks and callbacks are session-scoped so they cannot transfer an
 old watch's pending data to a new session. A successful enqueue is not a watch
 delivery acknowledgement; asynchronous GATT failures remain reported as errors.
 
-**Deletion limitation:** ATAK 5.5.1.8 SDK inspection shows that local
+### WEARTAK-112: explicit shared-point deletion
+
+ATAK 5.5.1.8 SDK inspection shows that local
 `MapItemDeleteReceiver` calls `removeFromGroup()`. `CotEventFactory` does not
 turn removed items into expired events; its default marker exporter creates
 fresh timestamps. ATAK's remote deletion importer instead accepts a
 `t-x-d-d` task with a target `<link>` and optional `__forcedelete`, which is not
-the watch's `phone_marker_cot` point contract. Consequently local removal
-detaches listeners and drops companion-side relay state, but sends no deletion
-packet. No fabricated expiry or unsupported delete envelope is emitted.
-The watch can consume genuinely expired valid marker CoT according to its
-existing source-scoped stale-removal rules, but this companion does not invent
-such an event from a local delete. Explicit phone deletion requires a separately
-agreed protocol change. Disconnect deliberately does not delete watch points.
+the shared-point contract. Neither importer nor external dispatcher is invoked
+for the new deletion envelope; the companion uses local `removeFromGroup()`.
+
+Both peers add `payload.revision` (opaque UUID) to live marker envelopes without
+rewriting the XML or existing marker fields. Deletion references that exact revision:
+
+```json
+{"msg_type":"marker_delete","payload":{"targetUid":"shared-point-uid","revision":"previously-exchanged-revision"}}
+```
+
+Only supported, non-PLI/non-emergency markers exchanged in the current bonded,
+services-ready BLE session qualify. A matching revision plus unchanged exported
+content is required before incoming deletion can remove an observed ATAK marker.
+Phone edits replace the shared revision and relinquish watch-echo suppression.
+Local ATAK removal emits a deletion only for an unchanged shared marker. Incoming
+removal suppresses the outgoing echo and releases listeners/state; the existing
+Bloodhound removal listener stops tracking the deleted target.
+Unknown UIDs, malformed tokens, duplicates, unsent edits, and ended-session frames
+cannot delete unrelated/native or newer points. Outcomes/failures are logged
+without sensitive payloads.
+
+The watch removes only its companion-owned map/navigation copy at or before the
+revision's original event time, retaining other-source copies and a replay watermark.
+For watch-origin points, the original local point is also removed unless a local
+edit is pending. Watch received-marker Delete retains its existing UID-wide local
+UX, but relays only a selected companion-source point. Bloodhound menu dismissal
+is not point deletion. Legacy stale BLE marker clears are no longer imported as
+fresh markers; ordinary network clears retain their existing behavior.
+
+There is no fabricated expiry, network deletion broadcast, ACK, offline replay,
+bulk sync, or deletion on disconnect. Transport enqueue is not delivery confirmation.
+Update both apps together; older peers can still receive points but have no deletion
+authorization token. Validate both directions on paired hardware before deployment.
 
 Validation: `PhoneMarkerRelayTest` exercises the production forwarding policy,
 exact envelope/XML preservation, create/update deduplication, filtering,
@@ -201,4 +229,11 @@ watch-echo release, disconnect/session rejection, removal/stop state, and write
 failures. These JVM tests do not establish ATAK/BLE hardware end-to-end behavior.
 Paired-device acceptance should include move/title/detail edits, watch-origin
 edits, unsupported PLI/emergency/shape items, disconnect/watch switching, and
-plugin stop/start.
+plugin stop/start. Specifically, create a phone point and start watch Bloodhound,
+delete in ATAK, and verify the companion-source point/target disappears and watch
+navigation stops. Delete a shared watch-dropped point on the watch and verify
+ATAK marker/tracking removal. Edit that watch-origin point in ATAK and repeat both
+directions. A same-UID TAK copy on the watch must survive phone deletion. Replay an
+old deletion after a newer edit or reconnect: newer/unshared points must survive,
+without echo deletion or startup replay. These are pending hardware acceptance
+checks, not claims of device validation.

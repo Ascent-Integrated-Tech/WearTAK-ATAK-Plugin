@@ -360,6 +360,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
+                try {
+                    JSONObject pointEnvelope = new JSONObject(jsonLine);
+                    if ("marker_delete".equals(pointEnvelope.optString("msg_type"))) {
+                        if (phoneMarkerRelay != null) phoneMarkerRelay.receiveDeletion(jsonLine);
+                        else Log.w(TAG, "Point relay unavailable for deletion");
+                        return;
+                    }
+                } catch (org.json.JSONException e) {
+                    Log.w(TAG, "Invalid point envelope", e);
+                    return;
+                }
                 BloodhoundBridge bridge = bloodhoundBridge;
                 if (bridge != null && bridge.handleJson(jsonLine)) return;
 
