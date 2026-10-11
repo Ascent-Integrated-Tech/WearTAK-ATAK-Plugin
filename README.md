@@ -86,6 +86,69 @@ COMPILATION
 _________________________________________________________________
 DEVELOPER NOTES
 
+Paired BLE Bloodhound synchronization (WEARTAK-78)
+
+While connected to a bonded WearTAK watch, starting native ATAK Bloodhound
+shares the same CoT target UID with the watch. A watch start selects native
+ATAK Bloodhound tracking (not route navigation). Ending tracking on either
+device ends that shared tracking session on both. This never cancels the
+underlying alert or deletes its marker. A missing local target is represented
+by a local marker using the watch-supplied callsign and coordinates.
+
+The newline-delimited JSON protocol uses `msg_type=bloodhound_control` and a
+payload containing `action` (`start` or `stop`), UUID `session_id`, and
+`target_uid`. Start may also carry `target_callsign`, `lat`, `lon`, and `hae`;
+coordinates are required when ATAK does not already have the target.
+Replies use `msg_type=bloodhound_control_result`, with `session_id`, `action`,
+Boolean `ok`, and optional `error`. Local and watch failures are shown as
+ATAK toast notifications and logged. Native event echoes and duplicate starts
+are suppressed; stops require both the current session ID and target UID.
+Repeated stops are acknowledged only for the original session/target pair.
+Command results correlate both action and session ID. Missing results time out
+after five seconds and failures are visibly reported; a queued BLE write alone
+does not confirm synchronization. Simultaneous starts awaiting acknowledgement
+converge on the lexicographically smaller session ID. The losing incoming start
+receives `ok=false`, `error=Superseded by simultaneous tracking start`; a late
+negative result or timeout for the losing local start cannot clear the winner.
+`action=update` carries the same session ID, target UID, callsign and coordinates
+without an ACK. Native target point/callsign changes publish updates; matching
+incoming updates modify only this bridge's fallback marker, never an existing
+locally sourced target, and do not restart tracking or echo. Direct CoT import
+relinquishes fallback ownership to the local source. Stale, mismatched and
+disconnected updates are ignored.
+Non-bridge point/callsign edits relinquish ownership immediately, before
+the import-complete event, so companion snapshots cannot overwrite a newly
+authoritative source. ATAK's same-UID MarkerImporter updates the existing marker
+in place; source handoff neither deletes it nor stops/restarts native tracking.
+Disconnect/unpair clears shared correlation, without stopping normal local
+tracking; reconnect never replays or resumes the disconnected shared session.
+Unpaired native ATAK behavior is unchanged.
+
+ATAK 5.5.1.8 SDK integration, verified against local `main.jar` bytecode:
+`BloodHoundTool._onBeginLink` sets target metadata `hounding=true`;
+`_onEndLink` removes it. `MapItem.addOnMetadataChangedListener("hounding", ...)`
+observes actual tracking edges, not dialog/HUD visibility or generic tool
+activation. Existing and newly added map items are observed. The host
+`MapActivity.getMapComponent(BloodHoundMapComponent.class)` supplies the native
+component. ATAK exposes no public tool getter, so a guarded reflective lookup
+of that component's protected `_buttonTool` field is necessary on this SDK.
+`BloodHoundTool.getRunning()` and `getEndItem()` confirm current native state.
+Its public `getHoundReceiver().onReceive(...)` is invoked on the main thread
+with `BloodHoundTool.BLOOD_HOUND` and `uid`: this starts a new target or toggles
+an existing target off. Synchronous invocation prevents a queued toggle from
+affecting a different target after the user switches tracking. Missing or
+incompatible host APIs produce a negative result instead of manipulating
+alerts. Future ATAK SDK versions must revalidate this compatibility seam.
+Native `onButtonClicked()` ends active tracking through `stop()`, which calls
+`_onEndLink()`; the watched metadata edge therefore includes the native close
+action as well as UID-toggle stops and target replacement.
+
+Focused local JVM coverage: `:app:testCivDebugUnitTest --tests
+com.weartak.atak.weartak_companion.plugin.BloodhoundSyncTest`.
+Device validation still requires bonded watch + ATAK hardware: test native
+and watch starts, both tracking-end actions, fast target replacement, stale
+stop rejection, unpair/disconnect, reconnect without replay, and unchanged
+alert/marker lifetime.
 ### WEARTAK-100: live phone point relay
 
 The companion forwards ATAK marker creation and subsequent point, type, and

@@ -63,6 +63,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private WearTakBleClient bleClient;
     private BleCotBridge bleCotBridge;
+    private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
     private CotServiceRemote cotServiceRemote;
@@ -291,6 +292,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         if (bleClient == null) {
             bleClient = new WearTakBleClient(pluginContext, connected -> {
+                BloodhoundBridge bridge = bloodhoundBridge;
+                if (!connected && bridge != null) bridge.disconnected();
                 mainHandler.post(() -> {
                     if (connectionStatusTV != null) {
                         connectionStatusTV.setText(connected ? "CONNECTED" : "DISCONNECTED");
@@ -336,6 +339,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             Log.i(TAG, "BleCotBridge initialized in plugin");
         }
 
+        if (bloodhoundBridge == null) {
+            bloodhoundBridge = new BloodhoundBridge(MapView.getMapView(), bleClient);
+        }
         registerMapItemListener();
         bleClient.start();
 
@@ -354,6 +360,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             @Override
             public void onJson(String jsonLine) {
                 Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
+                BloodhoundBridge bridge = bloodhoundBridge;
+                if (bridge != null && bridge.handleJson(jsonLine)) return;
 
                 // CoT forwarder path (your design)
                 if (bleCotBridge != null) {
@@ -422,6 +430,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             @Override
             public void onTrustLost(String deviceAddress, String reason) {
+                BloodhoundBridge bridge = bloodhoundBridge;
+                if (bridge != null) bridge.disconnected();
                 clearPreferredDevice(deviceAddress);
                 mainHandler.post(() -> {
                     currentConnectedAddress = null;
@@ -455,6 +465,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     @Override
     public void onStop() {
+        if (bloodhoundBridge != null) {
+            bloodhoundBridge.close();
+            bloodhoundBridge = null;
+        }
         unregisterMapItemListener();
         stopPhoneAlertForwarding();
         if (bleCotBridge != null) bleCotBridge.stopChatForwarding();

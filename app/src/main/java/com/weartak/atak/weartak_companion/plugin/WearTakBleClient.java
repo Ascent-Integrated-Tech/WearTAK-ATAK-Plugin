@@ -837,6 +837,11 @@ public class WearTakBleClient {
 
     public synchronized boolean isConnected() { return connected; }
 
+    public synchronized boolean isBondedConnected() {
+        return connected && bluetoothGatt != null && rxWriteChar != null
+                && isBonded(bluetoothGatt.getDevice());
+    }
+
     private final BroadcastReceiver bondStateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
