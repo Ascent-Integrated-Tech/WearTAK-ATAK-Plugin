@@ -153,6 +153,33 @@
 
             </LinearLayout>
 
+            <CheckBox
+                android:id="@+id/phoneManagedSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="false"
+                android:text="Manage watch settings from this phone" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Off: upload settings and P12, then disconnect. On: sync phone identity on reconnect and lock watch settings until disabled or unpaired."
+                android:paddingBottom="4dp" />
+
+            <TextView
+                android:id="@+id/phoneTeam"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:text="Phone team: —" />
+
+            <TextView
+                android:id="@+id/phoneRole"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="2dp"
+                android:text="Phone role: —" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

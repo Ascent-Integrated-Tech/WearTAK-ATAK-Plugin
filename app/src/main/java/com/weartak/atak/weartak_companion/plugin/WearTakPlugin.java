@@ -24,8 +24,10 @@ import com.atak.plugins.impl.PluginLayoutInflater;
 import com.atak.plugins.impl.IToolbarItem;
 import com.atakmap.android.gui.ImportFileBrowserDialog;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.android.maps.Marker;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -97,15 +99,21 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private Button sendSettingsButton;
     private Button refreshSettingsButton;
     private EditText watchCallsignET;
+    private TextView phoneTeamTV;
+    private TextView phoneRoleTV;
     private TextView settingsStatusTV;
+    private CheckBox phoneManagedSettingsCB;
 
     // State
     private int scanSessionCount = 0;
 
     // last received snapshot settings
-    private JSONObject lastSettingsPayload = null;
+    private volatile JSONObject lastSettingsPayload = null;
     private List<TakServerItem> currentServerList = new ArrayList<>();
     private int currentSelectedServerIndex = -1;
+    private volatile boolean phoneSettingsPushedThisConnection;
+    private boolean phoneManagedSettingsRequested;
+    private boolean settingsModeLoadedThisConnection;
 
     // Connection state
     private String currentConnectedAddress = null;
@@ -275,6 +283,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     } else {
                         hideConnectedCard();
                         currentConnectedAddress = null;
+                        phoneSettingsPushedThisConnection = false;
                     }
 
                     if (deviceAdapter != null) {
@@ -307,6 +316,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 Log.i(TAG, "BLE READY");
                 mainHandler.post(() -> {
                     if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
+                    phoneSettingsPushedThisConnection = false;
+                    settingsModeLoadedThisConnection = false;
                     requestSettingsFromWatch("onReady");
                 });
             }
@@ -339,6 +350,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                 if (settingsStatusTV != null && lastSettingsApplyResult == null) {
                                     settingsStatusTV.setText("Settings loaded from watch.");
                                 }
+                                updatePhoneIdentityViews();
+                                if (phoneManagedSettingsRequested && !phoneSettingsPushedThisConnection) {
+                                    phoneSettingsPushedThisConnection = sendSettingsToWatch();
+                                }
                             });
                         }
                     }
@@ -349,6 +364,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         String err = (p != null) ? p.optString("error", "") : "";
                         lastSettingsApplyResult = ok;
                         mainHandler.post(() -> {
+                            if (!ok) phoneSettingsPushedThisConnection = false;
                             if (settingsStatusTV != null) {
                                 settingsStatusTV.setText(ok
                                         ? "Settings validated and saved on watch; server connection not yet verified."
@@ -482,6 +498,20 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
 //            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
             watchCallsignET = paneView.findViewById(R.id.watchCallsign);
+            phoneTeamTV = paneView.findViewById(R.id.phoneTeam);
+            phoneRoleTV = paneView.findViewById(R.id.phoneRole);
+            phoneManagedSettingsCB = paneView.findViewById(R.id.phoneManagedSettings);
+            phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
+            phoneManagedSettingsCB.setOnClickListener(v -> {
+                phoneManagedSettingsRequested = phoneManagedSettingsCB.isChecked();
+                if (!phoneManagedSettingsRequested && watchCallsignET != null) {
+                    setText(watchCallsignET, actualWatchCallsign);
+                }
+                updatePhoneIdentityViews();
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Mode changed (not sent yet). Tap Send to Watch to apply.");
+                }
+            });
 
             takServerListRV = paneView.findViewById(R.id.takServerList);
             takServerListRV.setLayoutManager(new LinearLayoutManager(pluginContext));
@@ -573,7 +603,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             sendSettingsButton.setOnClickListener(v -> {
                 commitFieldsToSelectedItem();
-                sendSettingsToWatch();
+                phoneSettingsPushedThisConnection = sendSettingsToWatch();
             });
 
             settingsBackButton.setOnClickListener(v -> showDeviceScreen());
@@ -701,6 +731,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // ---------- SETTINGS: request / parse / apply ----------
     private void requestSettingsFromWatch(String reason) {
         if (bleClient == null) return;
+        phoneSettingsPushedThisConnection = false;
         lastSettingsApplyResult = null;
         String req = "{\"msg_type\":\"request_settings\"}";
         boolean ok = bleClient.writeJsonLineToWatch(req);
@@ -790,45 +821,29 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     public String actualWatchCallsign = null;
 
     // ---------- SETTINGS: send back to watch ----------
-    private void sendSettingsToWatch() {
-        if (bleClient == null) return;
+    private boolean sendSettingsToWatch() {
+        if (bleClient == null) return false;
 
-        JSONObject root = new JSONObject();
-        JSONObject payload = new JSONObject();
-        JSONArray list = new JSONArray();
-
+        JSONObject root;
         try {
-            for (int i = 0; i < currentServerList.size(); i++) {
-                TakServerItem t = currentServerList.get(i);
-                if (t.isP12Cert && (t.p12Cert == null || t.p12Cert.trim().isEmpty())) {
-                    if (settingsStatusTV != null) {
-                        String name = (t.name == null || t.name.trim().isEmpty()) ? ("Server " + (i + 1)) : t.name;
-                        settingsStatusTV.setText(name + " is set to P12 auth but has no certificate selected.");
-                    }
-                    return;
-                }
-            }
-
-            for (TakServerItem t : currentServerList) {
-                list.put(t.toJson());
-            }
-
-            payload.put("takServerList", list);
-
             Integer reportInt = tryParseInt(getText(reportIntervalET));
-            if (reportInt != null) payload.put("reportIntSecs", reportInt);
-
-            String cs = getText(watchCallsignET);
-            if (!cs.equals(actualWatchCallsign)) {
-                payload.put("callsign", cs);
-                desiredWatchCallsign = cs;
+            if (!getText(reportIntervalET).isEmpty() && reportInt == null) {
+                throw new IllegalArgumentException("Reporting interval must be a positive number.");
             }
-
-            root.put("msg_type", "set_settings");
-            root.put("payload", payload);
-        } catch (Throwable t) {
+            if (reportInt == null && lastSettingsPayload != null) {
+                reportInt = optInt(lastSettingsPayload, "reportIntSecs");
+            }
+            String cs = phoneManagedSettingsRequested ? getPhoneCallsign() : getText(watchCallsignET);
+            root = SettingsPayloadBuilder.build(currentServerList, reportInt, cs,
+                    getPhoneTeam(), getPhoneRole(), phoneManagedSettingsRequested);
+            desiredWatchCallsign = cs;
+        } catch (IllegalArgumentException error) {
+            if (settingsStatusTV != null) settingsStatusTV.setText(error.getMessage());
+            return false;
+        } catch (JSONException error) {
+            Log.e(TAG, "Failed to build settings JSON", error);
             if (settingsStatusTV != null) settingsStatusTV.setText("Failed to build settings JSON.");
-            return;
+            return false;
         }
 
         String jsonLine = root.toString().replace("\\/", "/");
@@ -837,6 +852,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (settingsStatusTV != null) {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
+        return ok;
     }
 
     private void addNewServer() {
@@ -928,6 +944,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 //        }
         if (deviceScreenRoot != null) deviceScreenRoot.setVisibility(View.GONE);
         if (settingsScreenRoot != null) settingsScreenRoot.setVisibility(View.VISIBLE);
+        updatePhoneIdentityViews();
     }
 
     private void showDeviceScreen() {
@@ -945,6 +962,49 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private static String getText(EditText e) {
         if (e == null || e.getText() == null) return "";
         return e.getText().toString().trim();
+    }
+
+    private String getPhoneCallsign() {
+        MapView mapView = MapView.getMapView();
+        String callsign = mapView == null ? "" : mapView.getDeviceCallsign();
+        if (callsign == null || callsign.trim().isEmpty()) {
+            Marker self = mapView == null ? null : mapView.getSelfMarker();
+            callsign = self == null ? "" : self.getMetaString("callsign", "");
+        }
+        return callsign == null ? "" : callsign.trim();
+    }
+
+    private String getPhoneProfileValue(String key, String fallback) {
+        MapView mapView = MapView.getMapView();
+        Marker self = mapView == null ? null : mapView.getSelfMarker();
+        String value = self == null ? "" : self.getMetaString(key, "");
+        if ((value == null || value.trim().isEmpty()) && lastSettingsPayload != null) {
+            value = lastSettingsPayload.optString(key, "");
+        }
+        return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private String getPhoneTeam() {
+        return getPhoneProfileValue("team", "Blue");
+    }
+
+    private String getPhoneRole() {
+        String role = getPhoneProfileValue("atakRoleType", "");
+        return role.isEmpty() ? getPhoneProfileValue("role", "Team Member") : role;
+    }
+
+    private void updatePhoneIdentityViews() {
+        String callsign = getPhoneCallsign();
+        if (watchCallsignET != null) {
+            watchCallsignET.setEnabled(!phoneManagedSettingsRequested);
+            watchCallsignET.setFocusableInTouchMode(!phoneManagedSettingsRequested);
+            if (phoneManagedSettingsRequested && !callsign.isEmpty()) watchCallsignET.setText(callsign);
+            if (!phoneManagedSettingsRequested && getText(watchCallsignET).isEmpty()) {
+                setText(watchCallsignET, actualWatchCallsign);
+            }
+        }
+        if (phoneTeamTV != null) phoneTeamTV.setText("Phone team (managed mode): " + getPhoneTeam());
+        if (phoneRoleTV != null) phoneRoleTV.setText("Phone role (managed mode): " + getPhoneRole());
     }
 
     private static Integer tryParseInt(String s) {
@@ -1150,9 +1210,20 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void applySettingsPayloadDiscretely(JSONObject payload, String reason) {
         if (payload == null) return;
+        lastSettingsPayload = payload;
         JSONArray servers = payload.optJSONArray("takServerList");
         Log.i(TAG, "applySettingsPayloadDiscretely reason=" + reason
                 + " serverCount=" + (servers == null ? 0 : servers.length()));
+        mainHandler.post(() -> {
+            if (!settingsModeLoadedThisConnection) {
+                phoneManagedSettingsRequested = payload.optBoolean("phoneManagedSettings", false);
+                settingsModeLoadedThisConnection = true;
+                if (phoneManagedSettingsCB != null) {
+                    phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
+                }
+            }
+            updatePhoneIdentityViews();
+        });
 
         // callsign (device-wide)
         if (payload.has("callsign")) {
@@ -1160,7 +1231,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (!cs.isEmpty()) {
                 actualWatchCallsign = cs;
                 mainHandler.post(() -> {
-                    if (watchCallsignET != null) watchCallsignET.setText(cs);
+                    if (!phoneManagedSettingsRequested) setText(watchCallsignET, cs);
                     updateConnectedCardTitleFromCallsign(cs); // optional if you already have this
                 });
             }
