@@ -15,6 +15,20 @@ emergency alerts, and GeoChat messages. An optional Garmin Connect IQ
 relay is being developed on the separate garmin-connect-iq-integration
 branch.
 
+SETTINGS AND P12 PROVISIONING (WEARTAK-90)
+
+By default, connecting or refreshing only reads watch settings. Edit the watch
+callsign and server settings, choose the server's P12 file/password if needed,
+then tap Send to Watch. Wait for the successful save acknowledgement before
+disconnecting. Uploaded credentials stay on the watch and watch settings remain
+editable; one-time provisioning does not replace its team or role.
+
+Manage watch settings from this phone is an explicit opt-in. It copies phone
+identity, syncs on reconnect, and keeps managed watch settings locked even while
+temporarily disconnected. Uncheck it and send again to release management while
+retaining saved certificates and current reporting settings. Unpairing also
+releases management, but restores the pre-management reporting settings.
+
 
 _________________________________________________________________
 PURPOSE AND CAPABILITIES
