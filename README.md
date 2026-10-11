@@ -85,3 +85,57 @@ COMPILATION
 
 _________________________________________________________________
 DEVELOPER NOTES
+
+### WEARTAK-100: live phone point relay
+
+The companion forwards ATAK marker creation and subsequent point, type, and
+metadata changes to the active bonded watch after notification subscription
+completes (services ready). Existing map points are observed for future edits,
+not automatically uploaded. Disconnect, reconnect, or switching watches does
+not trigger an offline replay or bulk synchronization.
+
+The envelope remains:
+
+```json
+{"msg_type":"phone_marker_cot","payload":{"cot":"<event ...>...</event>"}}
+```
+
+Supported types are exactly `a-f-G`, `a-u-G`, `a-h-G`, `a-n-G`, and
+`b-m-p-s-p-i`. Self/PLI, emergency, non-exportable items, shapes, routes, and
+unsupported types are excluded. Exported identity must match the map item,
+coordinates must be in range, HAE/CE/LE finite, and all timestamps positive.
+The ATAK SDK export is sent unchanged: UID, type, point, time/start/stale, and
+detail are not rewritten. Note that ATAK's default marker exporter itself
+generates current time/start and its configured stale interval; this is not a
+reconstruction of the original inbound network packet.
+
+Watch imports carry an internal ATAK import-source flag. The resulting marker
+snapshot suppresses immediate echoes and identical later notifications, not
+every future use of that UID. A phone edit to the point or exported details
+releases suppression. Failed imports have a bounded five-second pending guard.
+Duplicate edit notifications are coalesced; all map, point, metadata, and type
+listeners and pending callbacks are removed on plugin stop or item removal.
+Queued BLE chunks and callbacks are session-scoped so they cannot transfer an
+old watch's pending data to a new session. A successful enqueue is not a watch
+delivery acknowledgement; asynchronous GATT failures remain reported as errors.
+
+**Deletion limitation:** ATAK 5.5.1.8 SDK inspection shows that local
+`MapItemDeleteReceiver` calls `removeFromGroup()`. `CotEventFactory` does not
+turn removed items into expired events; its default marker exporter creates
+fresh timestamps. ATAK's remote deletion importer instead accepts a
+`t-x-d-d` task with a target `<link>` and optional `__forcedelete`, which is not
+the watch's `phone_marker_cot` point contract. Consequently local removal
+detaches listeners and drops companion-side relay state, but sends no deletion
+packet. No fabricated expiry or unsupported delete envelope is emitted.
+The watch can consume genuinely expired valid marker CoT according to its
+existing source-scoped stale-removal rules, but this companion does not invent
+such an event from a local delete. Explicit phone deletion requires a separately
+agreed protocol change. Disconnect deliberately does not delete watch points.
+
+Validation: `PhoneMarkerRelayTest` exercises the production forwarding policy,
+exact envelope/XML preservation, create/update deduplication, filtering,
+watch-echo release, disconnect/session rejection, removal/stop state, and write
+failures. These JVM tests do not establish ATAK/BLE hardware end-to-end behavior.
+Paired-device acceptance should include move/title/detail edits, watch-origin
+edits, unsupported PLI/emergency/shape items, disconnect/watch switching, and
+plugin stop/start.

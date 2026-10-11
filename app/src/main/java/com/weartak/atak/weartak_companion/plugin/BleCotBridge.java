@@ -36,6 +36,7 @@ public class BleCotBridge {
     private String myUid;
     private String pluginCallsign;
     private Boolean watchAsSource = false;
+    private volatile PhoneMarkerRelay phoneMarkerPolicy;
     private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
     private volatile WearTakBleClient bleClient;
     private ChatManagerMapComponent chatManager;
@@ -190,11 +191,23 @@ public class BleCotBridge {
             Log.e(TAG, "dispatchCot(" + label + "): parse failed", t);
             return;
         }
+        if (evt == null || !evt.isValid()) {
+            Log.w(TAG, "dispatchCot(" + label + "): invalid event");
+            return;
+        }
 
         // Internal
         if (internalCotDispatcher != null) {
             try {
-                internalCotDispatcher.dispatch(evt);
+                if ("MARKER".equals(label)) {
+                    PhoneMarkerRelay policy = phoneMarkerPolicy;
+                    if (policy != null) policy.watchImportStarted(evt.getUID(), System.currentTimeMillis());
+                    Bundle extras = new Bundle();
+                    extras.putBoolean(PhoneMarkerMapRelay.WATCH_IMPORT, true);
+                    internalCotDispatcher.dispatch(evt, extras);
+                } else {
+                    internalCotDispatcher.dispatch(evt);
+                }
                 Log.d(TAG, "dispatchCot(" + label + "): dispatched INTERNAL");
             } catch (Throwable t) {
                 Log.e(TAG, "dispatchCot(" + label + "): internal dispatch failed", t);
@@ -211,8 +224,6 @@ public class BleCotBridge {
             }
         }
 
-        // One-line summary
-        Log.i(TAG, "dispatchCot(" + label + "): done.)");
     }
 
     public void sendMarkerCot(String envelopeJson) {
@@ -341,6 +352,10 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "Error in sendMarkerCot(json)", e);
         }
+    }
+
+    void setPhoneMarkerPolicy(PhoneMarkerRelay policy) {
+        phoneMarkerPolicy = policy;
     }
 
     // =========================================================================================
