@@ -15,6 +15,19 @@ emergency alerts, and GeoChat messages. An optional Garmin Connect IQ
 relay is being developed on the separate garmin-connect-iq-integration
 branch.
 
+While a bonded WearTAK watch is connected over BLE, incoming ATAK emergency
+CoT (`b-a-o`, `b-a-o-*`, and `b-a-g`) and cancellations are forwarded to
+the watch's existing map/Bloodhound alert handling. The BLE envelope uses
+`msg_type: "phone_emergency_cot"` with the original CoT XML in `payload.cot`.
+The original UID, sender, location, and event times are preserved.
+Watch-origin emergency UIDs are tracked in a bounded set to suppress echoes
+back to the watch. Forwarding stops when the plugin stops or BLE disconnects;
+alerts received while disconnected are not queued for later replay.
+Local phone emergency notifications and imported ATAK alert/cancel notifications
+are also observed, since successfully imported events bypass fallback CoT listeners.
+Duplicate notifications of the same CoT are suppressed. A successful BLE queue
+operation is not a watch delivery acknowledgement.
+
 SETTINGS AND P12 PROVISIONING (WEARTAK-90)
 
 By default, connecting or refreshing only reads watch settings. Edit the watch

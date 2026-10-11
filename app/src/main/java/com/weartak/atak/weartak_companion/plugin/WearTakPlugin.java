@@ -1,7 +1,9 @@
 package com.weartak.atak.weartak_companion.plugin;
 
 import android.annotation.SuppressLint;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
@@ -24,6 +26,9 @@ import com.atak.plugins.impl.PluginLayoutInflater;
 import com.atak.plugins.impl.IToolbarItem;
 import com.atakmap.android.gui.ImportFileBrowserDialog;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.android.ipc.AtakBroadcast;
+import com.atakmap.comms.CotServiceRemote;
+import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.android.maps.Marker;
 
 import org.json.JSONArray;
@@ -58,6 +63,27 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private WearTakBleClient bleClient;
     private BleCotBridge bleCotBridge;
+    private CotServiceRemote cotServiceRemote;
+    private final PhoneEmergencyRelay phoneEmergencyRelay = new PhoneEmergencyRelay();
+    private final BroadcastReceiver phoneEmergencyReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            CotEvent event;
+            if ("com.atakmap.android.emergency.tool.SEND_EMERGENCY".equals(intent.getAction())) {
+                String xml = intent.getStringExtra("MESSAGE");
+                if (xml == null || xml.isEmpty()) return;
+                try {
+                    event = CotEvent.parse(xml);
+                } catch (Exception e) {
+                    Log.w(TAG, "Invalid phone emergency notification", e);
+                    return;
+                }
+            } else {
+                event = intent.getParcelableExtra("cotevent");
+            }
+            forwardPhoneEmergencyToWatch(event, null);
+        }
+    };
 
     // ------------------ UI ROOT ------------------
     // IMPORTANT: This is the inflated main_layout.xml root view.
@@ -420,13 +446,59 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
         });
 
+        startPhoneAlertForwarding();
         bleCotBridge.startChatForwarding(bleClient);
     }
 
     @Override
     public void onStop() {
+        stopPhoneAlertForwarding();
         if (bleCotBridge != null) bleCotBridge.stopChatForwarding();
         if (bleClient != null) bleClient.stop();
+    }
+
+    private void startPhoneAlertForwarding() {
+        if (cotServiceRemote != null) return;
+
+        phoneEmergencyRelay.start();
+        AtakBroadcast.DocumentedIntentFilter filter = new AtakBroadcast.DocumentedIntentFilter();
+        filter.addAction("com.atakmap.android.emergency.ALERT_EVENT");
+        filter.addAction("com.atakmap.android.emergency.CANCEL_EVENT");
+        filter.addAction("com.atakmap.android.emergency.tool.SEND_EMERGENCY");
+        AtakBroadcast.getInstance().registerReceiver(phoneEmergencyReceiver, filter);
+        CotServiceRemote remote = new CotServiceRemote();
+        // Successfully imported events bypass CotServiceRemote listeners. The broadcasts
+        // cover those and locally initiated alerts; this listener covers fallback events.
+        remote.setCotEventListener(this::forwardPhoneEmergencyToWatch);
+        cotServiceRemote = remote;
+    }
+
+    private void stopPhoneAlertForwarding() {
+        phoneEmergencyRelay.stop();
+        if (cotServiceRemote == null) return;
+        AtakBroadcast.getInstance().unregisterReceiver(phoneEmergencyReceiver);
+        cotServiceRemote.setCotEventListener(null);
+        cotServiceRemote = null;
+    }
+
+    private void forwardPhoneEmergencyToWatch(CotEvent event, android.os.Bundle extras) {
+        if (event == null || bleClient == null || !bleClient.isConnected()
+                || !PhoneEmergencyRelay.isEmergencyType(event.getType())) return;
+        String uid = event.getUID();
+        if (bleCotBridge != null && bleCotBridge.isWatchOriginEmergency(uid)) return;
+        StringBuilder xml = new StringBuilder();
+        event.buildXml(xml);
+        try {
+            if (!phoneEmergencyRelay.forward(event.getType(), xml.toString(),
+                    bleClient.isConnected(),
+                    bleCotBridge != null && bleCotBridge.isWatchOriginEmergency(uid),
+                    bleClient::writeJsonLineToWatch)) {
+                Log.w(TAG, "Phone emergency CoT could not be queued for BLE type="
+                        + event.getType() + " uid=" + uid);
+            }
+        } catch (org.json.JSONException e) {
+            Log.e(TAG, "Failed to serialize phone emergency CoT for BLE", e);
+        }
     }
 
     // ------------------ UI build / pane ------------------
