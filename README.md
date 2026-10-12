@@ -30,7 +30,32 @@ individual recipients, then call ATAK's
 recipient UIDs. Unknown/unwritable groups, empty recipients, missing targets, and
 missing chat managers fail with logs; they never fall back to broadcast. Only the
 explicit All Chat Rooms target uses the existing broadcast-contact API. Direct
-GeoChat retains its existing dispatch path.
+GeoChat now resolves a real remote IndividualContact with a GeoChat endpoint and
+uses `sendMessage(String, List<Contact>)` with only that contact, preserving ATAK's
+native direct conversation/history rather than dispatching private XML to broadcast.
+Unknown/self/broadcast-like direct targets are rejected with logs. Native sends run
+on ATAK's main thread.
+
+The watch picker offers **All Chat Rooms** to initiate native send-to-all chat and
+**Select User for Chat** to select/confirm a person on the map and create/open a
+direct conversation in the normal watch chat-room list. Direct replies retain the selected
+UID and never fall back to broadcast; map cancellation sends nothing.
+The watch pins All Chat Rooms first and Select User for Chat second; direct/named
+group rooms follow in descending latest-received-message order, updated on arrival.
+The broadcast room is not duplicated among those rooms.
+
+WIRE CONTRACT: version-1 envelopes retain `msgType`, `msgUid`, and `payload`.
+Phone-to-watch `chat_received` payload retains `uid` (message ID), `senderUid`,
+`senderCallsign`, `msg`, `receivedAt` (epoch milliseconds), and adds
+`conversationUid`, `conversationTitle`, `isGroup` (plus group `participantUids`).
+Watch-to-phone `chat` payload uses `roomUid`, `roomTitle`, `isGroup`, `msg` or `text`,
+and `cs`; direct messages also carry matching `recipientUid`/`replyTo`.
+Legacy `rmUid`/`rmTitle` remain emitted/accepted by WearOS. Conflicting destination
+or message aliases are rejected; group sends cannot use direct-recipient fallback.
+Room titles/callsigns are display metadata, never broadcast-routing defaults.
+There is no Garmin adapter or `relay_status.chatGroups` advertisement in this
+WearOS BLE path. A separate verified group-aware Garmin adapter must announce
+`chatGroups: true` for its matching session before named groups are enabled.
 
 Named incoming groups must list the paired phone among their recipient UIDs.
 Named replies containing ATAK broadcast-like/fake-group or TADIL-J destinations
@@ -51,6 +76,11 @@ chat, All Chat Rooms, duplicates/echo suppression, and a new inbox room arriving
 while replying. Delete or empty the phone group before replying and verify rejection
 logs without broadcast. Repeat reception/replies after BLE reconnect (no offline
 history guarantee). Standalone TAK watch tests are documented in the watch README.
+Also start with an empty watch inbox: initiate All Chat Rooms and verify native ATAK
+broadcast behavior; use Select User for Chat to cancel, then select/confirm one person and send
+by preset and keyboard. Verify only that person receives it and ATAK records the
+direct conversation. Remove the ATAK contact before sending and verify logged rejection
+without unrelated delivery. Phone-authored outgoing messages remain outside watch mirroring.
 
 While a bonded WearTAK watch is connected over BLE, incoming ATAK emergency
 CoT (`b-a-o`, `b-a-o-*`, and `b-a-g`) and cancellations are forwarded to

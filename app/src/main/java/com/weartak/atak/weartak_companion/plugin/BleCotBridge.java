@@ -5,11 +5,13 @@ import static com.atakmap.android.user.icon.Icon2525cPallet.COT_MAPPING_2525C;
 
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.atakmap.android.chat.ChatManagerMapComponent;
-import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.contact.Contact;
+import com.atakmap.android.contact.ContactUtil;
 import com.atakmap.android.contact.Contacts;
 import com.atakmap.android.contact.GroupContact;
 import com.atakmap.android.contact.IndividualContact;
@@ -559,6 +561,12 @@ public class BleCotBridge {
     }
 
     public void sendChat(String envelopeJson) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            if (!new Handler(Looper.getMainLooper()).post(() -> sendChat(envelopeJson))) {
+                Log.e(TAG, "Could not schedule ATAK chat send");
+            }
+            return;
+        }
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -567,36 +575,32 @@ public class BleCotBridge {
                 return;
             }
 
-            // -------------------------------
-            // Parse payload (watch envelope)
-            // -------------------------------
-            // Message id (used as messageId and last segment of GeoChat UID)
-            String msgUid = optString(p, "uid",
-                    optString(env, "msg_id", UUID.randomUUID().toString()));
-
-            // Destination identity
-            // In your watch schema: roomUid = chat room id, roomTitle = display title
-            // The working WearOS XML uses:
-            //   dstUid     -> __chat id / remarks to / GeoChat UID segment #3
-            //   dstChatroom-> __chat chatroom / <marti><dest callsign='...'/>
-            //
-            // So we map:
-            //   dstUid      = roomUid
-            //   dstChatroom = roomTitle
-            //
-            String dstUid      = optString(p, "rmUid", optString(p, "roomUid", ""));
-            String dstChatroom = optString(p, "rmTitle", optString(p, "roomTitle", dstUid));
-
-            // Message text
-            String chatMsg = optString(p, "msg", "");
-            if (ChatReplyRouter.route(dstUid, p.optBoolean("isGroup", false), chatMsg,
+            ChatReplyPayload reply = new ChatReplyPayload(p);
+            ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text,
                     new ChatReplyRouter.Targets<Contact>() {
                         public Contact find(String uid) {
-                            return Contacts.getInstance().getContactByUuid(uid);
+                            Contact target = Contacts.getInstance().getContactByUuid(uid);
+                            if (reply.hasDirectRecipient && target instanceof GroupContact) {
+                                throw new IllegalArgumentException("Direct recipient resolves to an ATAK group");
+                            }
+                            return target;
                         }
 
                         public boolean isGroup(Contact target) {
                             return target instanceof GroupContact;
+                        }
+
+                        public boolean isPrivateContact(Contact target) {
+                            return target instanceof IndividualContact && !myUid.equals(target.getUID())
+                                    && !target.getExtras().getBoolean("fakeGroup", false)
+                                    && !(target instanceof com.atakmap.android.contact.TadilJContact);
+                        }
+
+                        public void sendDirect(String text, Contact target) {
+                            if (ContactUtil.getGeoChatIpAddress((IndividualContact) target) == null) {
+                                throw new IllegalArgumentException("ATAK direct contact has no GeoChat endpoint: " + target.getUID());
+                            }
+                            requireChatManager().sendMessage(text, java.util.Collections.singletonList(target));
                         }
 
                         public boolean isWritable(Contact target) {
@@ -630,132 +634,7 @@ public class BleCotBridge {
                             if (all == null) throw new IllegalStateException("ATAK broadcast contact unavailable");
                             requireChatManager().sendMessage(text, java.util.Collections.singletonList(all));
                         }
-                    })) return;
-
-            // Attribute watch-originated messages to the paired phone in ATAK.
-            String senderCallsign = pluginCallsign;
-
-            // Time/stale fields match your watch schema
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 10_000));
-
-            // Optional diagnostics
-            int bat = optInt(p, "bat", -1);
-            int hr  = optInt(p, "hr", -1);
-
-            // -------------------------------
-            // Self identity (ATAK device)
-            // -------------------------------
-            String selfUid = myUid;
-            /*try {
-                if (mapView != null && mapView.getSelfMarker() != null) {
-                    selfUid = mapView.getSelfMarker().getUID();
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "sendChat: could not read self UID", t);
-            }*/
-            //if (selfUid == null) selfUid = "ANDROID-UNKNOWN";
-
-            // -------------------------------
-            // Build GeoChat UID (canonical)
-            // GeoChat.<senderUid>.<dstUid>.<msgId>
-            // -------------------------------
-            String eventUid = "GeoChat." + selfUid + "." + dstUid + "." + msgUid;
-
-            // -------------------------------
-            // Point: match WearOS style (0/0 + huge errors)
-            // This avoids coupling chat to GPS, and matches your working sample.
-            // -------------------------------
-            double lat = 0.0, lon = 0.0, hae = 999999.0, ce = 999999.0, le = 999999.0;
-
-            // -------------------------------
-            // Build <detail> exactly like WearOS
-            // -------------------------------
-            StringBuilder detail = new StringBuilder();
-            detail.append("<detail>");
-
-            // (Optional) keep these if you want, but WearOS chat example doesn't include them.
-            // Leave them out to match sample more closely.
-            // if (bat >= 0) detail.append("<status battery='").append(bat).append("'/>");
-            // if (hr >= 0)  detail.append("<sensor hr='").append(hr).append("'/>");
-
-            // __chat block (match WearOS)
-            detail.append("<__chat")
-                    .append(" parent='RootContactGroup'")
-                    .append(" groupOwner='false'")
-                    .append(" messageId='").append(escapeXml(msgUid)).append("'")
-                    .append(" chatroom='").append(escapeXml(dstChatroom)).append("'")
-                    .append(" id='").append(escapeXml(dstUid)).append("'")
-                    .append(" senderCallsign='").append(escapeXml(senderCallsign)).append("'>");
-
-            // chatgrp (match WearOS)
-            detail.append("<chatgrp")
-                    .append(" uid0='").append(escapeXml(selfUid)).append("'")
-                    .append(" uid1='").append(escapeXml(dstUid)).append("'")
-                    .append(" id='").append(escapeXml(dstUid)).append("'")
-                    .append("/>");
-
-            detail.append("</__chat>");
-
-            // link back to sender PLI (match WearOS)
-            detail.append("<link uid='").append(escapeXml(selfUid))
-                    .append("' type='a-f-G-U-C' relation='p-p'/>");
-
-            // remarks carries the message text (match WearOS)
-            detail.append("<remarks")
-                    .append(" source='").append(escapeXml(selfUid)).append("'")
-                    .append(" to='").append(escapeXml(dstUid)).append("'")
-                    .append(" time='").append(escapeXml(time)).append("'>")
-                    .append(escapeXml(chatMsg))
-                    .append("</remarks>");
-
-            // marti routing: OMIT when sending to All Chat Rooms (match WearOS logic)
-            if (!"All Chat Rooms".equalsIgnoreCase(dstUid)) {
-                detail.append("<marti><dest callsign='")
-                        .append(escapeXml(dstChatroom))
-                        .append("'/></marti>");
-            }
-
-            detail.append("</detail>");
-
-            // -------------------------------
-            // Build full CoT
-            // -------------------------------
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0'"
-                            + " uid='" + escapeXml(eventUid) + "'"
-                            + " type='b-t-f'"
-                            + " time='" + escapeXml(time) + "'"
-                            + " start='" + escapeXml(time) + "'"
-                            + " stale='" + escapeXml(stale) + "'"
-                            + " how='h-g-i-g-o'"
-                            + " access='Undefined'>"
-                            + "<point lat='" + lat + "' lon='" + lon + "' hae='" + hae
-                            + "' ce='" + ce + "' le='" + le + "'/>"
-                            + detail
-                            + "</event>";
-
-            Log.d(TAG, "GeoChat XML:\n" + xml);
-
-            CotEvent chatEvent = CotEvent.parse(xml);
-
-            // Local verification: this should populate ATAK chat UI locally
-            try {
-                ChatMessageParser parser = new ChatMessageParser(mapView);
-                parser.parseCotEvent(chatEvent);
-                Log.d(TAG, "ChatMessageParser: parsed OK");
-            } catch (Throwable t) {
-                Log.w(TAG, "ChatMessageParser parse failed (still attempting send)", t);
-            }
-
-            // Network send (broadcast). Note: this can still be intercepted by other plugins.
-            if (externalCotDispatcher != null) {
-                externalCotDispatcher.dispatchToBroadcast(chatEvent);
-                Log.d(TAG, "CHAT SENT (broadcast)");
-            } else {
-                Log.w(TAG, "externalCotDispatcher is null, not sending");
-            }
+                    });
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendChat(json)", e);
