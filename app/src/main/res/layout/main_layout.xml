@@ -108,6 +108,13 @@
             android:paddingBottom="4dp" />
 
         <Button
+            android:id="@+id/garminSettingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Garmin Settings" />
+
+        <Button
             android:id="@+id/garminToggleButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -243,6 +250,7 @@
                 android:text="Manage watch settings from this phone" />
 
             <TextView
+                android:id="@+id/phoneManagedSettingsDescription"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Off: upload settings and P12, then disconnect. On: sync phone identity on reconnect and lock watch settings until disabled or unpaired."
@@ -292,125 +300,131 @@
                     android:alpha="0.85" />
             </LinearLayout>
 
-            <!-- TAK Servers -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="TAK Servers"
-                android:textStyle="bold"
-                android:paddingTop="8dp"
-                android:paddingBottom="4dp" />
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/takServerList"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:nestedScrollingEnabled="false" />
-
             <LinearLayout
+                android:id="@+id/serverSettingsGroup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginTop="6dp">
-
-                <ImageButton
-                    android:id="@+id/addServerButton"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:contentDescription="Add Server"
-                    android:src="@drawable/ic_plus_circle"
-                    android:background="@android:color/transparent"
-                    android:padding="8dp" />
-
-            </LinearLayout>
-            <!-- Selected Server -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Selected Server"
-                android:textStyle="bold"
-                android:paddingTop="8dp"
-                android:paddingBottom="4dp" />
-
-            <EditText
-                android:id="@+id/takName"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Name" />
-
-            <EditText
-                android:id="@+id/takAddress"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Address (IP/DNS)" />
-
-            <EditText
-                android:id="@+id/takPort"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Port"
-                android:inputType="number" />
-
-            <CheckBox
-                android:id="@+id/takUseP12"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Authenticate with P12 certificate"
-                android:paddingTop="6dp" />
-
-            <EditText
-                android:id="@+id/takUsername"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Username (if not P12)"
-                android:inputType="text" />
-
-            <EditText
-                android:id="@+id/takPassword"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Password (if not P12)"
-                android:inputType="textPassword" />
-
-            <TextView
-                android:id="@+id/takP12Status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="No certificate selected."
-                android:visibility="gone" />
-
-            <EditText
-                android:id="@+id/takP12Password"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="P12 password"
-                android:inputType="textPassword"
-                android:visibility="gone" />
-
-            <LinearLayout
-                android:id="@+id/takP12Buttons"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:visibility="gone">
-
-                <Button
-                    android:id="@+id/chooseP12Button"
-                    android:layout_width="0dp"
+                android:orientation="vertical">
+                <!-- TAK Servers -->
+                <TextView
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Choose P12 File" />
+                    android:text="TAK Servers"
+                    android:textStyle="bold"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="4dp" />
 
-                <Button
-                    android:id="@+id/clearP12Button"
-                    android:layout_width="wrap_content"
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/takServerList"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="Clear" />
+                    android:nestedScrollingEnabled="false" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginTop="6dp">
+
+                    <ImageButton
+                        android:id="@+id/addServerButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:contentDescription="Add Server"
+                        android:src="@drawable/ic_plus_circle"
+                        android:background="@android:color/transparent"
+                        android:padding="8dp" />
+
+                </LinearLayout>
+                <!-- Selected Server -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Selected Server"
+                    android:textStyle="bold"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="4dp" />
+
+                <EditText
+                    android:id="@+id/takName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Name" />
+
+                <EditText
+                    android:id="@+id/takAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Address (IP/DNS)" />
+
+                <EditText
+                    android:id="@+id/takPort"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Port"
+                    android:inputType="number" />
+
+                <CheckBox
+                    android:id="@+id/takUseP12"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Authenticate with P12 certificate"
+                    android:paddingTop="6dp" />
+
+                <EditText
+                    android:id="@+id/takUsername"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Username (if not P12)"
+                    android:inputType="text" />
+
+                <EditText
+                    android:id="@+id/takPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Password (if not P12)"
+                    android:inputType="textPassword" />
+
+                <TextView
+                    android:id="@+id/takP12Status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="6dp"
+                    android:text="No certificate selected."
+                    android:visibility="gone" />
+
+                <EditText
+                    android:id="@+id/takP12Password"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="P12 password"
+                    android:inputType="textPassword"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/takP12Buttons"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <Button
+                        android:id="@+id/chooseP12Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Choose P12 File" />
+
+                    <Button
+                        android:id="@+id/clearP12Button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="Clear" />
+                </LinearLayout>
             </LinearLayout>
 
         </LinearLayout>

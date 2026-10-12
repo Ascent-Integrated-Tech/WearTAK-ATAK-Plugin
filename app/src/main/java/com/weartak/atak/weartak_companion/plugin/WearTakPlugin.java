@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -72,15 +73,24 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private GarminConnectIqClient garminClient;
     private GarminEntityForwarder garminEntities;
     private GarminMapEntitySource garminEntitySource;
+    private GarminEntityForwarder.Link garminSettingsLink;
+    private final GarminSettingsTransaction garminSettingsTransaction = new GarminSettingsTransaction();
+    private Map<String, Object> garminSettingsDraftAtSend;
+    private boolean garminSettingsSnapshotLoaded;
     private volatile boolean garminEnabled;
     private Button connectionModeButton;
     private TextView connectionModeAdvisory;
+    private Button garminSettingsButton;
+    private View serverSettingsGroup;
     private final SettingsSessionGuard settingsSession = new SettingsSessionGuard();
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
                     ++scanSessionCount;
                     systemBondedEnabled = garminEnabled = false;
+                    garminSettingsTransaction.cancel();
+                    garminSettingsLink = null;
+                    garminSettingsSnapshotLoaded = false;
                     if (garminEntities != null) garminEntities.close();
                     garminEntities = null;
                     garminEntitySource = null;
@@ -185,6 +195,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private Button sendSettingsButton;
     private Button refreshSettingsButton;
+    private TextView phoneManagedSettingsDescription;
     private EditText watchCallsignET;
     private TextView phoneTeamTV;
     private TextView phoneRoleTV;
@@ -661,7 +672,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         connectionModeAdvisory.setText(mode == ConnectionModeController.Mode.SAMSUNG
                 ? "Samsung Wearable reuses the existing Android Bluetooth bond established via Galaxy Wearable; retries until you change mode or disconnect."
                 : mode == ConnectionModeController.Mode.GARMIN
-                ? "Requires Garmin Connect Mobile and WearTAK-Garmin with ATAK Relay enabled. BLE settings are unavailable."
+                ? "Requires Garmin Connect Mobile and WearTAK-Garmin with ATAK Relay enabled. Garmin profile settings sync separately; TAK servers stay on this phone."
                 : "Scan and connect manually. Existing Bluetooth bonds are preserved.");
         scanButton.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
         deviceList.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
@@ -670,6 +681,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         systemBondedWatchStatus.setVisibility(mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
         paneView.findViewById(R.id.garminPanel).setVisibility(
                 mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
+        if (garminSettingsButton != null) {
+            garminSettingsButton.setEnabled(mode == ConnectionModeController.Mode.GARMIN
+                    && garminClient != null && garminClient.isConnected());
+        }
         if (autoReconnectCB != null) {
             autoReconnectCB.setEnabled(mode == ConnectionModeController.Mode.TRADITIONAL);
             autoReconnectCB.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL
@@ -745,6 +760,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     if (!connectionModes.isCurrent(token)) return;
                                     renderGarminConnection(connected);
                                     if (garminEntities != null) garminEntities.refreshLinks();
+                                    refreshGarminSettingsLink();
+                                    updateSettingsSendState();
+                                    updateConnectionModeUi();
                                 });
                             }
 
@@ -792,10 +810,175 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_neutral);
     }
 
+    private void refreshGarminSettingsLink() {
+        List<GarminEntityForwarder.Link> links = garminClient == null
+                ? Collections.emptyList() : garminClient.entityLinks();
+        GarminEntityForwarder.Link next = links.size() == 1 && links.get(0).isCurrent()
+                ? links.get(0) : null;
+        if (garminSettingsLink != next) {
+            garminSettingsTransaction.cancel();
+            garminSettingsDraftAtSend = null;
+            garminSettingsLink = next;
+            garminSettingsSnapshotLoaded = false;
+            lastSettingsApplyResult = null;
+            phoneSettingsPushedThisConnection = false;
+            if (settingsStatusTV != null && settingsScreenRoot != null
+                    && settingsScreenRoot.getVisibility() == View.VISIBLE) {
+                settingsStatusTV.setText(next == null
+                        ? "Garmin settings need exactly one connected WearTAK watch."
+                        : "Requesting settings from Garmin watch...");
+            }
+        }
+        if (next == null && links.size() > 1 && garminConnectionStatusTV != null) {
+            garminConnectionStatusTV.setText("Connect only one Garmin watch to manage its settings.");
+        }
+    }
+
+    private void openGarminSettings() {
+        refreshGarminSettingsLink();
+        if (garminSettingsLink == null || !garminSettingsLink.isCurrent()) {
+            if (garminConnectionStatusTV != null) {
+                garminConnectionStatusTV.setText("Settings require exactly one connected Garmin watch with WearTAK.");
+            }
+            return;
+        }
+        showSettingsScreen();
+        requestSettingsFromWatch("Garmin settings button");
+    }
+
+    private void handleGarminSettingsMessage(String msgType, JSONObject payload,
+            GarminEntityForwarder.Link link) {
+        if (payload == null || link == null || link != garminSettingsLink || !link.isCurrent()) return;
+        if (garminSettingsTransaction.isPending() && !garminSettingsDraftIsCurrent()) {
+            garminSettingsTransaction.cancel();
+            garminSettingsDraftAtSend = null;
+            phoneSettingsPushedThisConnection = false;
+            if (settingsStatusTV != null) {
+                settingsStatusTV.setText("Profile changed while waiting; refresh and send the current settings again.");
+            }
+            updateSettingsSendState();
+            return;
+        }
+        Object value = payload.opt("transactionId");
+        if (!GarminSettingsProtocol.isValidTransactionId(value)) {
+            Log.w(TAG, "Ignoring Garmin settings response with missing or invalid transaction ID.");
+            return;
+        }
+        String transactionId = (String) value;
+        long attempt = garminSettingsTransaction.generation();
+        GarminSettingsTransaction.Result result;
+        long now = SystemClock.elapsedRealtime();
+        boolean applyWasPending = phoneSettingsPushedThisConnection;
+        if ("settings_set_ack".equals(msgType)) {
+            Object ok = payload.opt("ok");
+            boolean acknowledged = Boolean.TRUE.equals(ok);
+            String error = payload.optString("error", "Invalid settings acknowledgement");
+            result = garminSettingsTransaction.acknowledge(transactionId, link, attempt,
+                    now, acknowledged);
+            if (result == GarminSettingsTransaction.Result.WAITING) {
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Watch acknowledged settings; verifying the saved profile...");
+                }
+                return;
+            }
+            if (result == GarminSettingsTransaction.Result.FAILED) {
+                garminSettingsDraftAtSend = null;
+                lastSettingsApplyResult = false;
+                phoneSettingsPushedThisConnection = false;
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText(Boolean.FALSE.equals(ok)
+                            ? "Watch could not save settings: " + error
+                            : "Watch returned an invalid settings acknowledgement.");
+                }
+                updateSettingsSendState();
+                return;
+            }
+        } else {
+            result = garminSettingsTransaction.receiveSnapshot(transactionId, link,
+                    attempt, now, payload);
+            if (result == GarminSettingsTransaction.Result.WAITING) {
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Watch profile received; waiting for save acknowledgement...");
+                }
+                return;
+            }
+            if (result == GarminSettingsTransaction.Result.FAILED) {
+                garminSettingsDraftAtSend = null;
+                lastSettingsApplyResult = false;
+                phoneSettingsPushedThisConnection = false;
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Watch profile did not match the settings sent.");
+                }
+                updateSettingsSendState();
+                return;
+            }
+        }
+        if (result == GarminSettingsTransaction.Result.SUCCEEDED) {
+            boolean applyConfirmed = "settings_set_ack".equals(msgType) || applyWasPending;
+            JSONObject confirmedSnapshot = garminSettingsTransaction.takeConfirmedSnapshot();
+            garminSettingsDraftAtSend = null;
+            if (confirmedSnapshot != null) applyGarminSettingsSnapshot(confirmedSnapshot);
+            lastSettingsApplyResult = applyConfirmed ? true : null;
+            if (settingsStatusTV != null && applyConfirmed) {
+                settingsStatusTV.setText("Settings saved on Garmin watch; TAK server connection is not verified.");
+            } else if (settingsStatusTV != null && !phoneSettingsPushedThisConnection) {
+                settingsStatusTV.setText("Settings loaded from Garmin watch.");
+            }
+        } else if (result == GarminSettingsTransaction.Result.TIMED_OUT) {
+            garminSettingsDraftAtSend = null;
+            lastSettingsApplyResult = false;
+            phoneSettingsPushedThisConnection = false;
+            if (settingsStatusTV != null) {
+                settingsStatusTV.setText("Garmin settings confirmation timed out; refresh and retry.");
+            }
+        }
+        updateSettingsSendState();
+    }
+
+    private void applyGarminSettingsSnapshot(JSONObject payload) {
+        garminSettingsSnapshotLoaded = true;
+        lastSettingsPayload = payload;
+        settingsModeLoadedThisConnection = true;
+        phoneManagedSettingsRequested = payload.optBoolean("phoneManagedSettings", false);
+        if (phoneManagedSettingsCB != null) {
+            phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
+        }
+        actualWatchCallsign = payload.optString("callsign", "");
+        setText(watchCallsignET, actualWatchCallsign);
+        setText(reportIntervalET, String.valueOf(payload.optInt("reportIntSecs")));
+        updatePhoneIdentityViews();
+        updateConnectedCardTitleFromCallsign(actualWatchCallsign);
+        updateSettingsSendState();
+        if (phoneManagedSettingsRequested && !phoneSettingsPushedThisConnection) {
+            phoneSettingsPushedThisConnection = sendSettingsToWatch();
+        }
+    }
+
+    private void scheduleGarminSettingsTimeout(String transactionId,
+            GarminEntityForwarder.Link link, long attempt) {
+        mainHandler.postDelayed(() -> {
+            GarminSettingsTransaction.Result result = garminSettingsTransaction.timeout(
+                    transactionId, link, attempt, SystemClock.elapsedRealtime());
+            if (result == GarminSettingsTransaction.Result.TIMED_OUT) {
+                garminSettingsDraftAtSend = null;
+                lastSettingsApplyResult = false;
+                phoneSettingsPushedThisConnection = false;
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Garmin settings confirmation timed out; refresh and retry.");
+                }
+                updateSettingsSendState();
+            }
+        }, GarminSettingsTransaction.TIMEOUT_MILLIS);
+    }
+
     private void handleGarminMessage(JSONObject envelope, GarminEntityForwarder.Link link) {
         if (!garminEnabled) return;
         String msgType = envelope.optString("msgType", "");
         Log.i(TAG, "Garmin Connect IQ message: " + msgType);
+        if ("settings_set_ack".equals(msgType) || "watch_settings".equals(msgType)) {
+            handleGarminSettingsMessage(msgType, envelope.optJSONObject("payload"), link);
+            return;
+        }
         if (garminConnectionStatusTV != null) {
             garminConnectionStatusTV.setText("Garmin watch active (" + msgType + ").");
         }
@@ -917,6 +1100,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
             garminConnectionBadgeTV = paneView.findViewById(R.id.garminConnectionBadge);
+            garminSettingsButton = paneView.findViewById(R.id.garminSettingsButton);
+            garminSettingsButton.setOnClickListener(v -> openGarminSettings());
             if (garminClient != null) {
                 garminConnectionStatusTV.setText(garminClient.getStatus());
                 if (garminEnabled) {
@@ -998,13 +1183,23 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // settings screen
             settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
+            serverSettingsGroup = paneView.findViewById(R.id.serverSettingsGroup);
 //            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
             watchCallsignET = paneView.findViewById(R.id.watchCallsign);
             phoneTeamTV = paneView.findViewById(R.id.phoneTeam);
             phoneRoleTV = paneView.findViewById(R.id.phoneRole);
+            phoneManagedSettingsDescription = paneView.findViewById(R.id.phoneManagedSettingsDescription);
             phoneManagedSettingsCB = paneView.findViewById(R.id.phoneManagedSettings);
             phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
             phoneManagedSettingsCB.setOnClickListener(v -> {
+                if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN
+                        && garminSettingsTransaction.isPending()) {
+                    garminSettingsTransaction.cancel();
+                    phoneSettingsPushedThisConnection = false;
+                    if (settingsStatusTV != null) {
+                        settingsStatusTV.setText("Settings mode changed; send again to confirm the new profile.");
+                    }
+                }
                 phoneManagedSettingsRequested = phoneManagedSettingsCB.isChecked();
                 if (!phoneManagedSettingsRequested && watchCallsignET != null) {
                     setText(watchCallsignET, actualWatchCallsign);
@@ -1254,6 +1449,33 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: request / parse / apply ----------
     private void requestSettingsFromWatch(String reason) {
+        if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
+            refreshGarminSettingsLink();
+            GarminEntityForwarder.Link link = garminSettingsLink;
+            if (link == null || !link.isCurrent()) {
+                if (settingsStatusTV != null) {
+                    settingsStatusTV.setText("Garmin settings require one connected WearTAK watch.");
+                }
+                return;
+            }
+            String transactionId = GarminSettingsProtocol.newTransactionId();
+            garminSettingsDraftAtSend = null;
+            long attempt = garminSettingsTransaction.beginRequest(transactionId, link,
+                    SystemClock.elapsedRealtime());
+            boolean sent = link.send("request_settings", GarminSettingsProtocol.request(transactionId));
+            if (!sent) {
+                garminSettingsTransaction.cancel();
+                if (settingsStatusTV != null) settingsStatusTV.setText("Could not request Garmin settings.");
+                return;
+            }
+            phoneSettingsPushedThisConnection = false;
+            lastSettingsApplyResult = null;
+            if (settingsStatusTV != null) settingsStatusTV.setText("Requesting settings from Garmin watch...");
+            updateSettingsSendState();
+            scheduleGarminSettingsTimeout(transactionId, link, attempt);
+            Log.i(TAG, "Garmin request_settings (" + reason + ") sent with transaction " + transactionId);
+            return;
+        }
         if (bleClient == null || !bleClient.isConnected()) return;
         phoneSettingsPushedThisConnection = false;
         lastSettingsApplyResult = null;
@@ -1346,6 +1568,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: send back to watch ----------
     private boolean sendSettingsToWatch() {
+        if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
+            return sendSettingsToGarminWatch();
+        }
         if (bleClient == null || !bleClient.isConnected()) return false;
         if (!settingsSession.canSend()) {
             if (settingsStatusTV != null) settingsStatusTV.setText("Wait for this watch's settings snapshot before sending.");
@@ -1382,6 +1607,84 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
         return ok;
+    }
+
+    private boolean sendSettingsToGarminWatch() {
+        GarminEntityForwarder.Link link = garminSettingsLink;
+        if (link == null || !link.isCurrent()) {
+            if (settingsStatusTV != null) settingsStatusTV.setText("Garmin watch is not connected.");
+            return false;
+        }
+        if (!garminSettingsSnapshotLoaded) {
+            if (settingsStatusTV != null) {
+                settingsStatusTV.setText("Refresh this Garmin watch's settings before sending.");
+            }
+            return false;
+        }
+        if (garminSettingsTransaction.isPending()) {
+            if (settingsStatusTV != null) {
+                settingsStatusTV.setText("Wait for the current Garmin settings transaction to finish.");
+            }
+            return false;
+        }
+
+        Integer reportInterval = tryParseInt(getText(reportIntervalET));
+        if (!getText(reportIntervalET).isEmpty() && reportInterval == null) {
+            if (settingsStatusTV != null) {
+                settingsStatusTV.setText("Reporting interval must be a positive number.");
+            }
+            return false;
+        }
+        if (reportInterval == null && lastSettingsPayload != null) {
+            reportInterval = optInt(lastSettingsPayload, "reportIntSecs");
+        }
+        String callsign = phoneManagedSettingsRequested
+                ? getPhoneCallsign() : getText(watchCallsignET);
+        String transactionId = GarminSettingsProtocol.newTransactionId();
+        Map<String, Object> payload;
+        try {
+            payload = GarminSettingsProtocol.phoneSettings(transactionId, callsign,
+                    reportInterval, getPhoneTeam(), getPhoneRole(), phoneManagedSettingsRequested);
+        } catch (IllegalArgumentException error) {
+            if (settingsStatusTV != null) settingsStatusTV.setText(error.getMessage());
+            return false;
+        }
+
+        long attempt = garminSettingsTransaction.beginApply(transactionId, link,
+                SystemClock.elapsedRealtime(), payload);
+        garminSettingsDraftAtSend = captureGarminSettingsDraft();
+        lastSettingsApplyResult = null;
+        boolean sent = link.send("set_settings", payload);
+        if (!sent) {
+            garminSettingsTransaction.cancel();
+            garminSettingsDraftAtSend = null;
+            if (settingsStatusTV != null) settingsStatusTV.setText("Could not send settings to Garmin watch.");
+            return false;
+        }
+        desiredWatchCallsign = callsign;
+        phoneSettingsPushedThisConnection = true;
+        if (settingsStatusTV != null) {
+            settingsStatusTV.setText("Sending profile settings to Garmin watch...");
+        }
+        scheduleGarminSettingsTimeout(transactionId, link, attempt);
+        return true;
+    }
+
+    private Map<String, Object> captureGarminSettingsDraft() {
+        Map<String, Object> draft = new HashMap<>();
+        draft.put("phoneManaged", phoneManagedSettingsRequested);
+        draft.put("callsign", phoneManagedSettingsRequested
+                ? getPhoneCallsign() : getText(watchCallsignET));
+        draft.put("reportInterval", getText(reportIntervalET));
+        draft.put("team", getPhoneTeam());
+        draft.put("role", getPhoneRole());
+        return draft;
+    }
+
+    private boolean garminSettingsDraftIsCurrent() {
+        if (garminSettingsDraftAtSend == null) return true;
+        Map<String, Object> current = captureGarminSettingsDraft();
+        return current.equals(garminSettingsDraftAtSend);
     }
 
     private void addNewServer() {
@@ -1465,7 +1768,20 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     // ---------- screen nav ----------
 
     private void showSettingsScreen() {
-        if (bleClient == null || !bleClient.isConnected()) return;
+        boolean garminMode = connectionModes.getMode() == ConnectionModeController.Mode.GARMIN;
+        if (garminMode) {
+            if (garminSettingsLink == null || !garminSettingsLink.isCurrent()) return;
+        } else if (bleClient == null || !bleClient.isConnected()) {
+            return;
+        }
+        if (serverSettingsGroup != null) {
+            serverSettingsGroup.setVisibility(garminMode ? View.GONE : View.VISIBLE);
+        }
+        if (phoneManagedSettingsDescription != null) {
+            phoneManagedSettingsDescription.setText(garminMode
+                    ? "Off: send callsign and reporting profile only. TAK servers and P12 stay on this phone. On: sync phone identity and lock watch profile controls until disabled."
+                    : "Off: upload settings and P12, then disconnect. On: sync phone identity on reconnect and lock watch settings until disabled or unpaired.");
+        }
         updateSettingsSendState();
 //        if (settingsDeviceSubtitle != null) {
 //            String label = (selectedDevice != null)
@@ -1746,6 +2062,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void clearSessionSettings() {
         settingsSession.clear();
+        garminSettingsTransaction.cancel();
+        garminSettingsDraftAtSend = null;
+        garminSettingsSnapshotLoaded = false;
         phoneSettingsPushedThisConnection = false;
         phoneManagedSettingsRequested = false;
         settingsModeLoadedThisConnection = false;
@@ -1768,8 +2087,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void updateSettingsSendState() {
         if (sendSettingsButton != null) {
-            sendSettingsButton.setEnabled(settingsSession.canSend()
-                    && bleClient != null && bleClient.isConnected());
+            boolean garminMode = connectionModes.getMode() == ConnectionModeController.Mode.GARMIN;
+            sendSettingsButton.setEnabled(garminMode
+                    ? garminSettingsSnapshotLoaded && garminSettingsLink != null
+                            && garminSettingsLink.isCurrent()
+                            && !garminSettingsTransaction.isPending()
+                    : settingsSession.canSend() && bleClient != null && bleClient.isConnected());
         }
     }
 

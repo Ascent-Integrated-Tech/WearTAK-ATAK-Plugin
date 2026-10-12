@@ -101,6 +101,20 @@ nearby-unit snapshots require a valid phone location; cancellation remains
 available if the phone loses GPS. Garmin transport is optional and does
 not replace the Samsung/Wear OS setup.
 
+The **Garmin Settings** action requires exactly one connected Garmin watch and
+requests its current profile before enabling Send. Garmin profile writes are
+correlated by a UUID transaction ID and report
+success only after a matching positive save acknowledgement and an exact profile
+snapshot are both received. A timeout, disconnect, watch change, profile edit,
+negative acknowledgement, or mismatched/untagged response cannot confirm a
+write. Only callsign, team, role, reporting interval, and the explicit phone
+management flag are sent to Garmin; TAK server configuration and P12 credentials
+remain on the ATAK phone. One-time provisioning remains the default; ongoing
+phone identity management requires the existing explicit opt-in.
+Validation on 2026-10-12 passed all 170 offline `testCivDebugUnitTest` tests and
+the Civ release Java/resource checks with the local ATAK 5.5.1.8 SDK and SDK 36.
+These results do not establish ATAK 5.8 SDK or paired-watch behavior.
+
 GROUP CHAT (WEARTAK-118)
 
 Incoming remote ATAK chat is forwarded with the normalized conversation UID/title,
