@@ -480,6 +480,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         else Log.w(TAG, "Point relay unavailable for deletion");
                         return;
                     }
+                    if ("marker_delete_ack".equals(pointEnvelope.optString("msg_type"))) {
+                        if (phoneMarkerRelay != null) phoneMarkerRelay.receiveDeletionAck(jsonLine);
+                        return;
+                    }
                 } catch (org.json.JSONException e) {
                     Log.w(TAG, "Invalid point envelope", e);
                     return;

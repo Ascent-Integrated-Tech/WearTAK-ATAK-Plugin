@@ -3,6 +3,7 @@ package com.weartak.atak.weartak_companion.plugin;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.atakmap.android.importexport.CotEventFactory;
 import com.atakmap.android.maps.MapEvent;
@@ -22,6 +23,7 @@ import org.json.JSONException;
 final class PhoneMarkerMapRelay {
     static final String WATCH_IMPORT = "weartak_watch_marker";
     private static final String TAG = "WTK/PointRelay";
+    private static final long ACK_TIMEOUT_MS = 10_000L;
     private static final String[] EVENTS = {MapEvent.ITEM_ADDED, MapEvent.ITEM_REFRESH,
             MapEvent.ITEM_PERSIST, MapEvent.ITEM_IMPORTED, MapEvent.ITEM_REMOVED};
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -72,12 +74,22 @@ final class PhoneMarkerMapRelay {
         if (!(item instanceof Marker)) return;
         if (MapEvent.ITEM_REMOVED.equals(event.getType())) {
             try {
-                policy.forwardDeletion(snapshot(item), client.getReadySession(),
-                            (json, session) -> {
-                                boolean written = client.writeJsonLineToWatch(json, session);
+                final String uid = item.getUID();
+                final String token = policy.deletionToken(uid);
+                final long session = client.getReadySession();
+                boolean sent = policy.forwardDeletion(snapshot(item), session,
+                            (json, writeSession) -> {
+                                boolean written = client.writeJsonLineToWatch(json, writeSession);
                                 if (!written) Log.w(TAG, "Point deletion write rejected");
                                 return written;
                             });
+                if (sent && token != null) {
+                    handler.postDelayed(() -> {
+                        if (policy.resolveDeletionAck(uid, token, session)) {
+                            reportDeletion(uid, "not acknowledged");
+                        }
+                    }, ACK_TIMEOUT_MS);
+                }
             } catch (JSONException | RuntimeException e) {
                 Log.e(TAG, "Point deletion export failed", e);
             }
@@ -124,21 +136,66 @@ final class PhoneMarkerMapRelay {
                     return;
                 }
                 MapItem item = mapView.getRootGroup().deepFindUID(uid);
+                boolean removed = false;
                 try {
                     if (!(item instanceof Marker) || !markers.containsKey(item)
                             || !policy.acceptsDeletion(snapshot(item), token, session)) {
                         Log.d(TAG, "Point deletion ignored: unknown or changed revision");
-                        return;
+                    } else {
+                        removed = policy.applyLocalDeletion(snapshot(item), token, session,
+                                item::removeFromGroup);
+                        Log.d(TAG, "Point deletion applied=" + removed);
                     }
-                    boolean removed = policy.applyLocalDeletion(snapshot(item), token, session,
-                            item::removeFromGroup);
-                    Log.d(TAG, "Point deletion applied=" + removed);
                 } catch (RuntimeException e) {
                     Log.e(TAG, "Point deletion application failed", e);
+                }
+                try {
+                    if (!client.writeJsonLineToWatch(PhoneMarkerRelay.deletionAck(uid, token, removed), session)) {
+                        Log.w(TAG, "Point deletion ack write rejected");
+                    }
+                } catch (JSONException e) {
+                    Log.e(TAG, "Point deletion ack failed", e);
                 }
             }
         });
         return true;
+    }
+
+    boolean receiveDeletionAck(String json) {
+        final String uid, token, result;
+        try {
+            JSONObject payload = new JSONObject(json).optJSONObject("payload");
+            Object target = payload == null ? null : payload.opt("targetUid");
+            Object revision = payload == null ? null : payload.opt("revision");
+            Object outcome = payload == null ? null : payload.opt("result");
+            if (!(target instanceof String) || !(revision instanceof String) || !(outcome instanceof String)
+                    || !PhoneMarkerRelay.validToken((String) revision)) {
+                Log.w(TAG, "Ignoring invalid point deletion ack");
+                return false;
+            }
+            uid = (String) target;
+            token = (String) revision;
+            result = (String) outcome;
+        } catch (JSONException e) {
+            Log.w(TAG, "Ignoring invalid point deletion ack JSON", e);
+            return false;
+        }
+        if (!policy.resolveDeletionAck(uid, token, client.getReadySession())) {
+            Log.w(TAG, "Ignoring unknown point deletion ack");
+            return false;
+        }
+        reportDeletion(uid, PhoneMarkerRelay.ACK_APPLIED.equals(result) ? "applied" : "rejected");
+        return true;
+    }
+
+    private void reportDeletion(String uid, String outcome) {
+        Log.i(TAG, "Watch point deletion uid=" + uid + " outcome=" + outcome);
+        handler.post(() -> {
+            MapView view = mapView;
+            if (view != null) {
+                Toast.makeText(view.getContext(), "Watch delete " + outcome, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void attach(MapItem item) {

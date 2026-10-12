@@ -658,8 +658,15 @@ UX, but relays only a selected companion-source point. Bloodhound menu dismissal
 is not point deletion. Legacy stale BLE marker clears are no longer imported as
 fresh markers; watch point deletion never generates a network clear.
 
-There is no fabricated expiry, network deletion broadcast, ACK, offline replay,
+There is no fabricated expiry, network deletion broadcast, offline replay,
 bulk sync, or deletion on disconnect. Transport enqueue is not delivery confirmation.
+Deletions are acknowledged in both directions with a `marker_delete_ack` envelope
+(`targetUid`, `revision`, `result` of `applied` or `rejected`) over the same BLE link.
+After handling a watch deletion the plugin returns one for the watch to match. For a
+deletion the phone sends, it records the watch's reply for that exact uid, revision and
+session, reports "not acknowledged" after 10 seconds, and ignores unknown or duplicate
+acks. An ack reports only the peer's local outcome, not delivery to any TAK server, and a
+peer that predates it never answers.
 Update both apps together; older peers can still receive points but have no deletion
 authorization token. Validate both directions on paired hardware before deployment.
 

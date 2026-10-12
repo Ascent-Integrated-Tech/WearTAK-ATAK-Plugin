@@ -57,6 +57,25 @@ final class PhoneMarkerRelay {
     }
     private final Map<String, Revision> revisions = new HashMap<>();
     private String incomingDeletionUid;
+    private final java.util.Set<String> pendingDeletionAcks = new java.util.HashSet<>();
+
+    static final String ACK_APPLIED = "applied";
+    static final String ACK_REJECTED = "rejected";
+
+    private static String ackKey(String uid, String token, long session) {
+        return session + "|" + token + "|" + uid;
+    }
+
+    static String deletionAck(String uid, String token, boolean applied) throws JSONException {
+        return new JSONObject().put("msg_type", "marker_delete_ack")
+                .put("payload", new JSONObject().put("targetUid", uid).put("revision", token)
+                        .put("result", applied ? ACK_APPLIED : ACK_REJECTED)).toString();
+    }
+
+    /** Returns true once for a deletion this phone sent and has not yet resolved. */
+    synchronized boolean resolveDeletionAck(String uid, String token, long session) {
+        return pendingDeletionAcks.remove(ackKey(uid, token, session));
+    }
 
     static boolean validToken(String token) {
         return token != null && token.matches("[a-zA-Z0-9-]{1,64}");
@@ -138,9 +157,17 @@ final class PhoneMarkerRelay {
         Revision revision = revisions.get(marker.uid);
         if (revision == null || revision.session != readySession
                 || !revision.fingerprint.equals(marker.fingerprint)) return false;
-        return writer.write(new JSONObject().put("msg_type", "marker_delete")
+        boolean written = writer.write(new JSONObject().put("msg_type", "marker_delete")
                 .put("payload", new JSONObject().put("targetUid", marker.uid)
                         .put("revision", revision.token)).toString(), readySession);
+        if (written) pendingDeletionAcks.add(ackKey(marker.uid, revision.token, readySession));
+        return written;
+    }
+
+    /** Token a deletion of this uid would carry, or null when none is eligible. */
+    synchronized String deletionToken(String uid) {
+        Revision revision = revisions.get(uid);
+        return revision == null ? null : revision.token;
     }
 
     synchronized boolean acceptsDeletion(Snapshot marker, String token, long readySession) {
@@ -174,6 +201,7 @@ final class PhoneMarkerRelay {
 
     synchronized void clear() {
         session = -1;
+        pendingDeletionAcks.clear();
         sent.clear();
         watchCopies.clear();
         pendingImports.clear();

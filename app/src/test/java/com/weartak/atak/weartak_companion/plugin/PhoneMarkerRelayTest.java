@@ -68,6 +68,32 @@ public class PhoneMarkerRelayTest {
         assertFalse(relay.forwardDeletion(marker("initial"), 7, (json, session) -> true));
     }
 
+    @Test public void sentDeletionIsAcknowledgedOnceForItsSessionAndToken() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "watch-revision", 7);
+        relay.watchImported(marker("watch"));
+        assertFalse(relay.resolveDeletionAck("phone", "watch-revision", 7));
+        assertTrue(relay.forwardDeletion(marker("watch"), 7, (json, session) -> true));
+        assertEquals("watch-revision", relay.deletionToken("phone"));
+        assertFalse(relay.resolveDeletionAck("phone", "other", 7));
+        assertFalse(relay.resolveDeletionAck("phone", "watch-revision", 8));
+        assertTrue(relay.resolveDeletionAck("phone", "watch-revision", 7));
+        assertFalse(relay.resolveDeletionAck("phone", "watch-revision", 7));
+    }
+
+    @Test public void rejectedWriteIsNeverAwaitingAckAndAckEnvelopeCarriesResult() throws Exception {
+        PhoneMarkerRelay relay = new PhoneMarkerRelay();
+        relay.watchImportStarted("phone", 0, "watch-revision", 7);
+        relay.watchImported(marker("watch"));
+        assertFalse(relay.forwardDeletion(marker("watch"), 7, (json, session) -> false));
+        assertFalse(relay.resolveDeletionAck("phone", "watch-revision", 7));
+        JSONObject ack = new JSONObject(PhoneMarkerRelay.deletionAck("phone", "watch-revision", false));
+        assertEquals("marker_delete_ack", ack.getString("msg_type"));
+        assertEquals("rejected", ack.getJSONObject("payload").getString("result"));
+        assertEquals("applied", new JSONObject(PhoneMarkerRelay.deletionAck("phone", "t", true))
+                .getJSONObject("payload").getString("result"));
+    }
+
     @Test public void watchImportDeletionAndPhoneEditSupersedeOldTokenWithoutEcho() throws Exception {
         PhoneMarkerRelay relay = new PhoneMarkerRelay();
         relay.watchImportStarted("phone", 0, "watch-revision", 7);
