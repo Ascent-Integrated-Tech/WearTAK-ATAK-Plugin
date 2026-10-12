@@ -17,6 +17,77 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+TRADITIONAL BLE AUTOMATIC RECONNECT
+
+Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconnect:
+`WearTakBleClient.start()` explicitly initialized with no auto-connect, and
+`main_layout.xml`/`WearTakPlugin` had no automatic-reconnect checkbox. Samsung
+already had its own `SystemBondedWatchConnection` retries; selecting that mode
+is not a Traditional BLE automatic-reconnect toggle.
+
+This narrow change restores the original MR15 checkbox and copy:
+**Reconnect automatically** / **Try to reconnect when WearTAK closes, restarts,
+or disconnects unexpectedly**. It is visible only in Traditional BLE and defaults
+OFF. The choice persists in ATAK's host-owned preferences, not the plugin package
+data directory. The fresh `wtk_traditional_reconnect_v1` namespace intentionally
+does not import experimental MR15 or Samsung preferences: neither can silently
+enable the new toggle. No other preference storage is migrated.
+
+After a bonded, services-ready connection in the current plugin run, unexpected
+loss starts a retry after 2 seconds; failed attempts retry after 60 seconds, with
+a bounded 30-second setup watchdog (normal BLE setup still times out at 25 seconds).
+Retries address only that same already-bonded peer, never scan by name to adopt a
+different watch or create/remove a system bond. A changed address or explicit unpair
+requires manual selection/pairing. The checkbox choice and previously ready peer
+survive plugin restart; an enabled Traditional BLE run can resume retries to that
+same peer, but data still requires a fresh bonded/services-ready session. Selecting
+a new peer clears the previous reconnect target until the new peer reaches readiness.
+Manual Disconnect and genuine trust loss disarm retries until another ready session.
+Bluetooth OFF pauses retries and ON resumes an eligible armed peer. User scans pause
+background retries; completion resumes them without racing a manual connection.
+
+While enabled and ready, a lightweight `request_watch_info` probe runs every
+30 seconds (no settings/P12 polling). Two missed 10-second responses or a failed
+probe reset the transport and begin retry. All timers are cancelled on stop,
+toggle-off, or mode ownership changes, and generation fences reject stale callbacks.
+The existing session-qualified data writes and current chat/local deletion/alerts/
+Bloodhound/provisioning policies are unchanged. The status listener is rebound on
+each BLE mode start so a previous mode token cannot own a restarted connection.
+
+Samsung Wearable retains its existing retry owner; it never uses this toggle or
+health loop. Garmin retains its separate Connect IQ lifecycle, with named groups
+blocked, `reliableDelivery:false`, and no external point deletion.
+
+The checkbox and explanatory copy are hidden outside Traditional BLE, and the
+checkbox is disabled there. Its click handler also checks the current mode.
+Mode teardown explicitly revokes Traditional BLE reconnect ownership before
+stopping the transport; stopped/generation-fenced probe and retry callbacks cannot
+reconnect after switching to Samsung or Garmin.
+
+An Android Bluetooth bond is stored pairing/trust, not an active WearTAK GATT
+session. Galaxy Wearable reconnecting its own watch connection does not establish
+the plugin's separate A11A GATT channel or notification readiness. The existing
+Samsung `SystemBondedWatchConnection` discovery/setup/retry coordinator therefore
+remains necessary and unchanged. No Samsung toggle or redundant retry loop, and
+no new Garmin reconnect behavior, is added.
+
+Validation uses JVM scheduler/preferences seams plus the existing transport,
+session, chat, point/alert/settings, Bloodhound, and Garmin tests. These are not BLE
+hardware acceptance. Still verify watch app close/restart/out-of-range, Bluetooth
+OFF/ON, manual Disconnect, persisted OFF/ON, new peer selection/unpair, mode switches,
+and repeated plugin stop/start on paired hardware; ensure no old-session payloads
+arrive. SDK 36 and local ATAK 5.5.1.8 `main.jar` support offline Java/resource checks;
+the declared ATAK 5.8 target cannot be SDK-validated here because its SDK is not
+installed (an APK is not an SDK).
+
+Validation (2026-10-12, base `c6cd9d1`): full offline
+`:app:testCivDebugUnitTest` passed **144 tests** (124 existing + 20 new reconnect/
+preference tests), zero failures. `:app:compileCivDebugJavaWithJavac` and
+`:app:processCivDebugResources` also passed using SDK 36 and these existing flags:
+`-Ptakdev.plugin=C:\Projects\ATAK-CIV-5.5.1.8-SDK\atak-gradle-takdev.jar`
+and `-Ptak.sdk.main.jar=C:\Projects\ATAK-CIV-5.5.1.8-SDK\main.jar`.
+This does not claim ATAK 5.8 SDK/API, install, or hardware validation.
+
 GARMIN SETUP
 
 Pair the Garmin watch in Garmin Connect Mobile and install WearTAK-Garmin.

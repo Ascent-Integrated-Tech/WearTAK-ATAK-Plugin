@@ -83,6 +83,47 @@ public class WearTakBleClient {
     private volatile boolean connected = false;
     private boolean servicesReady;
     private volatile long sessionGeneration;
+    private boolean automaticReconnectAllowed;
+    private final TraditionalBleReconnect reconnect = new TraditionalBleReconnect(
+            new SystemBondedWatchConnection.Scheduler() {
+                @Override public void execute(Runnable action) { runOnMain(action); }
+                @Override public void later(Runnable action, long delayMs) {
+                    main.postDelayed(action, delayMs);
+                }
+                @Override public void cancel(Runnable action) { main.removeCallbacks(action); }
+            }, new TraditionalBleReconnect.Transport() {
+                @Override public boolean available() {
+                    return started && bluetoothUnavailableReason() == null;
+                }
+                @Override public boolean busy() {
+                    return scanning || pendingBondDevice != null || bluetoothGatt != null;
+                }
+                @Override public boolean connect(String address) {
+                    if (!available()) return false;
+                    BluetoothDevice peer;
+                    try {
+                        peer = bluetoothAdapter.getRemoteDevice(address);
+                    } catch (IllegalArgumentException e) {
+                        handleTrustLoss(address, "invalid_retry_peer", "Invalid reconnect address");
+                        return false;
+                    } catch (SecurityException e) {
+                        return false;
+                    }
+                    if (!isBonded(peer)) {
+                        handleTrustLoss(address, "bond_lost_before_retry", "Reconnect requires existing bond");
+                        return false;
+                    }
+                    connectToSelectedDeviceInternal(new DiscoveredDevice(null, address, 0), false);
+                    return true;
+                }
+                @Override public boolean probe() {
+                    return getReadySession() >= 0
+                            && writeJsonLineToWatch("{\"msg_type\":\"request_watch_info\"}");
+                }
+                @Override public void reset() {
+                    resetSession("automatic reconnect timeout");
+                }
+            });
 
     private final LinkedHashMap<String, DiscoveredDevice> discovered = new LinkedHashMap<>();
 
@@ -129,7 +170,9 @@ public class WearTakBleClient {
         void onConnectionStatusChanged(boolean connected);
     }
 
-    private final StatusListener statusListener;
+    private volatile StatusListener statusListener;
+
+    public void setStatusListener(StatusListener listener) { statusListener = listener; }
 
     public WearTakBleClient(Context context, StatusListener statusListener) {
         this.baseContext = context;
@@ -192,10 +235,16 @@ public class WearTakBleClient {
     private void failSecureSession(String msg, String reason) {
         final long token = sessionGeneration;
         error(msg);
-        resetSessionAsync(reason, token);
+        runOnMain(() -> {
+            if (token != sessionGeneration || !started) return;
+            resetSession(reason);
+            reconnect.onLoss();
+        });
     }
 
     private void handleTrustLoss(String address, String reason, String msg) {
+        reconnect.disarm();
+        reconnectPreference().disarm();
         final long token = sessionGeneration;
         pendingBondDevice = null;
         clearPreferredAddressIfMatches(address);
@@ -290,10 +339,14 @@ public class WearTakBleClient {
 
         registerBondReceiver();
         started = true;
-        logI("start(): initialized (no auto-connect)");
+        AutoReconnectPreference savedReconnect = reconnectPreference();
+        reconnect.start(savedReconnect.enabled(), automaticReconnectAllowed, savedReconnect.armedAddress());
+        logI("start(): initialized (automatic reconnect opt-in=" + savedReconnect.enabled() + ")");
     }
 
     public synchronized void stop() {
+        reconnect.stop();
+        started = false;
         stopScanInternal("stop()");
         closeGattInternal("stop()");
         unregisterBondReceiver();
@@ -548,6 +601,12 @@ public class WearTakBleClient {
     }
 
     public synchronized void connectToSelectedDevice(DiscoveredDevice device, boolean allowBondCreation) {
+        reconnect.disarm();
+        if (automaticReconnectAllowed) reconnectPreference().disarm();
+        connectToSelectedDeviceInternal(device, allowBondCreation);
+    }
+
+    private synchronized void connectToSelectedDeviceInternal(DiscoveredDevice device, boolean allowBondCreation) {
         if (device == null || device.address == null) return;
         if (!started) start();
 
@@ -757,8 +816,35 @@ public class WearTakBleClient {
     }
 
     public synchronized void disconnect() {
+        reconnect.disarm();
+        if (automaticReconnectAllowed) reconnectPreference().disarm();
         resetSession("disconnect()");
     }
+
+    private AutoReconnectPreference reconnectPreference() {
+        return new AutoReconnectPreference(PluginPrefs.get(baseContext, AutoReconnectPreference.NAME));
+    }
+
+    public boolean isAutoReconnectEnabled() {
+        return reconnectPreference().enabled();
+    }
+
+    public synchronized void setAutoReconnectEnabled(boolean enabled) {
+        reconnectPreference().setEnabled(enabled);
+        if (!enabled && reconnect.isRetrying()) resetSession("automatic reconnect disabled");
+        reconnect.setEnabled(enabled);
+    }
+
+    public synchronized void setAutomaticReconnectAllowed(boolean allowed) {
+        automaticReconnectAllowed = allowed;
+        reconnect.setAllowed(allowed);
+    }
+
+    public boolean isAutoReconnecting() { return reconnect.isRetrying(); }
+
+    public synchronized void resumeAutoReconnect() { reconnect.resume(); }
+
+    public synchronized void pauseAutoReconnect() { reconnect.pause(); }
 
     // -------------------- NEW: outbound JSON write (chunked) --------------------
 
@@ -898,7 +984,11 @@ public class WearTakBleClient {
             if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
                 if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
-                    failSecureSession("Bluetooth disabled", "bluetooth_off");
+                    reconnect.pause();
+                    resetSession("bluetooth_off");
+                    error("Bluetooth disabled");
+                } else if (state == BluetoothAdapter.STATE_ON) {
+                    reconnect.resume();
                 }
                 return;
             }
@@ -950,6 +1040,10 @@ public class WearTakBleClient {
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
 
+        @Override public void onServiceChanged(BluetoothGatt gatt) {
+            dispatchGatt(gatt, () -> failSecureSession("Watch services changed", "service_changed"));
+        }
+
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             dispatchGatt(gatt, () -> handleConnectionStateChange(gatt, status, newState));
@@ -979,6 +1073,7 @@ public class WearTakBleClient {
                 }
                 closeGattInternal("STATE_DISCONNECTED status=" + status);
                 setConnected(false);
+                reconnect.onLoss();
             }
         }
 
@@ -1067,6 +1162,8 @@ public class WearTakBleClient {
                 setupTimeout = null;
                 savePreferredAddress(gatt.getDevice().getAddress());
                 servicesReady = true;
+                if (automaticReconnectAllowed) reconnectPreference().arm(gatt.getDevice().getAddress());
+                reconnect.onReady(gatt.getDevice().getAddress());
                 setConnected(true);
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
@@ -1146,6 +1243,11 @@ public class WearTakBleClient {
     };
 
     private void handleJsonLine(String line) {
+        try {
+            JSONObject env = new JSONObject(line);
+            if ("watch_info".equals(env.optString("msgType"))
+                    && env.optJSONObject("payload") != null) reconnect.onHealthResponse();
+        } catch (org.json.JSONException ignored) {}
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
 
