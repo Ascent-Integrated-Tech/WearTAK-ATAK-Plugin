@@ -11,9 +11,24 @@ PLUGIN SUMMARY
 WearTAK is an ATAK companion plugin that connects ATAK with supported
 smartwatches. It relays Cursor-on-Target (CoT) data over Bluetooth Low
 Energy between ATAK and Samsung/Wear OS watches, including map markers,
-emergency alerts, and GeoChat messages. An optional Garmin Connect IQ
-relay is being developed on the separate garmin-connect-iq-integration
-branch.
+emergency alerts, and GeoChat messages. This integration branch includes
+the Garmin Connect IQ relay and an exclusive three-mode connection selector.
+The optional Garmin Connect IQ
+transport uses Garmin Connect Mobile on the phone rather than the
+Samsung/Wear OS BLE connection.
+
+GARMIN SETUP
+
+Pair the Garmin watch in Garmin Connect Mobile and install WearTAK-Garmin.
+On the watch, select Settings > Network Preferences and enable ATAK Relay.
+In the ATAK plugin device pane, select Garmin Connect IQ. The connection
+badge and status text report the phone/watch link; finding a watch alone
+does not confirm the WearTAK app is installed or that a message arrived.
+The relay supports watch markers, emergencies, direct/broadcast GeoChat,
+and requested snapshots of nearby ATAK units. New emergency alerts and
+nearby-unit snapshots require a valid phone location; cancellation remains
+available if the phone loses GPS. Garmin transport is optional and does
+not replace the Samsung/Wear OS setup.
 
 GROUP CHAT (WEARTAK-118)
 
@@ -53,9 +68,11 @@ and `cs`; direct messages also carry matching `recipientUid`/`replyTo`.
 Legacy `rmUid`/`rmTitle` remain emitted/accepted by WearOS. Conflicting destination
 or message aliases are rejected; group sends cannot use direct-recipient fallback.
 Room titles/callsigns are display metadata, never broadcast-routing defaults.
-There is no Garmin adapter or `relay_status.chatGroups` advertisement in this
-WearOS BLE path. A separate verified group-aware Garmin adapter must announce
-`chatGroups: true` for its matching session before named groups are enabled.
+The WearOS BLE path supports these named groups. The Garmin adapter shares the
+normalizer and native direct/broadcast routing but rejects named groups, including
+legacy replies resolving to a GroupContact. Its session-correlated `relay_status`
+advertises `chatGroups: false` and `reliableDelivery: false`; only a separately
+verified group-aware route may enable named Garmin groups.
 
 Named incoming groups must list the paired phone among their recipient UIDs.
 Named replies containing ATAK broadcast-like/fake-group or TADIL-J destinations
@@ -150,9 +167,182 @@ EQUIPMENT SUPPORTED
 _________________________________________________________________
 COMPILATION
 
+This branch targets ATAK 5.8.0 (plugin-api com.atakmap.app@5.8.0.CIV for
+the CIV variant). Use JDK 17 to run Gradle 8.14.3 with Android Gradle Plugin
+8.13.2, Android SDK platform 36, compile/target SDK 36, and minimum SDK 23.
+Java source and bytecode compatibility remain Java 8.
+
+TPP should configure its authenticated takrepo.url/user/password in
+local.properties or Gradle properties. The repository resolves takdev 3.+;
+an offline/local takdev.plugin JAR must be version 3.5.3 or newer and paired
+with the ATAK 5.8 SDK. Do not use a 5.5/5.6 SDK to validate 5.8 compatibility.
+This plugin has no native sources, so no NDK installation is required;
+if native compilation is added, ATAK 5.8 requires NDK 27.3.13750724.
+ATAK-provided core AndroidX libraries remain excluded from implementation;
+dependency alignment follows ATAK 5.8 (core 1.17.0 except core-viewtree,
+lifecycle 2.10.0, fragment 1.8.9).
+
+Run gradlew.bat :app:testCivDebugUnitTest :app:assembleCivDebug, then
+gradlew.bat :app:lintCivRelease :app:assembleCivRelease for release validation.
+An archive is source only, not a verified APK or TPP-signed package.
+ATAK 5.8 API/build and phone behavior require the matching SDK/repository
+and device testing; local tests against an older SDK do not establish them.
+
+Production CIV debug resource-link/Java compilation and JVM reconciliation tests
+are described below. These local checks do not establish ATAK 5.8 compatibility
+or release packaging/signing.
+
 _________________________________________________________________
 DEVELOPER NOTES
 
+THREE-MODE SELECTOR INTEGRATION
+
+The connection-mode button offers three real, mutually exclusive routes:
+- Use Samsung Wearable Bond: explicit opt-in to automatic discovery,
+  connection and reconnection through the existing Samsung Wearable mode controller.
+  The name refers to reusing the Android system Bluetooth bond established via
+  Galaxy Wearable, not a Samsung API integration or a new pairing operation.
+- Traditional BLE Pairing: manual Scan/Connect and BLE watch settings.
+  No automatic Samsung Wearable candidate observation runs in this mode.
+- Garmin Connect IQ: starts the Garmin Connect Mobile SDK relay, including
+  watch CoT/messages and requested nearby entity snapshots. Install WearTAK
+  on the paired Garmin watch and enable Settings > Network Preferences >
+  ATAK Relay. Retry Garmin Connect IQ restarts this route if initialization
+  or discovery failed. Direct BLE settings are not available for Garmin.
+
+Selecting a different mode stops the prior route (including Samsung Wearable
+observation, timers, scans and GATT, or Garmin SDK listeners), clears the
+old connected card/settings state, and then starts the new route. Queued
+callbacks are generation-guarded, including after switching away and back.
+Re-selecting the current mode does not disconnect it. Plugin shutdown stops
+all transport activity without clearing the saved selection.
+
+The host preferences file weartak_companion_prefs owns connection_mode.
+Saved traditional_ble from the earlier UI-only selector is honored; its
+plugin-context preference is read once if the host value is absent. With
+no selector value, legacy use_system_bonded_watch=true migrates to Samsung Wearable;
+false/absent migrates to Traditional. Unknown mode values fall back to
+Traditional, never automatic use. New values are samsung_system_bond,
+traditional_ble and garmin_connect_iq. The legacy Samsung Wearable boolean stays
+synchronized for downgrade compatibility; preferred BLE device keys are
+unchanged. Restart resumes the saved route; Traditional never auto-connects.
+
+Deliberate BLE Disconnect selects/persists Traditional before disconnecting,
+so Samsung Wearable retries cannot immediately reconnect. Scan/manual Connect are
+available only in Traditional. To stop Garmin, select another mode; plugin
+shutdown also stops it. Switching does not delete Android Bluetooth bonds.
+
+MR !14 is reconciled with canonical develop `2bc0bf7`, including WEARTAK-87/90/
+99/100/78/112/118. Samsung Wearable bond reuse, exclusive transport ownership and the
+existing mode-selector UI remain unchanged. Mode teardown also removes native
+chat/emergency/point listeners and closes Bloodhound correlation before starting
+the new route. Readiness and point revisions stay scoped to the active BLE session.
+
+Garmin chat uses the same received-payload builder as BLE: `uid` is the message
+ID, not the sender or room; `senderUid`, `senderCallsign`, `msg`, `receivedAt`
+(epoch milliseconds), `conversationUid`, `conversationTitle`, `isGroup`, and
+group `participantUids` retain their wire meanings. Direct and exact All Chat Rooms
+messages can be handed to Connect IQ. Named incoming groups are rejected before
+SDK handoff; outgoing named groups are rejected before native dispatch. No missing
+or conflicting destination can fall back to broadcast. Updated Garmin watches
+reject unsupported named groups before their shared outbox using the false capability.
+This adapter does not claim relay-result acknowledgements or TAK delivery.
+
+Garmin deletion is explicitly unsupported because this adapter has no negotiated
+shared-point revision session. It never emits the old external `t-x-d-d` deletion.
+WEARTAK-112's paired BLE local-only revision-gated removal remains intact.
+Garmin settings, Bloodhound synchronization and phone live marker/emergency
+forwarding remain outside this integration; Garmin watch-origin marker/emergency
+and requested nearby entity snapshots retain their existing route.
+
+Reconciliation validation uses Gradle 8.14.3/AGP 8.13.2, Android SDK 36 and
+the installed ATAK 5.5.1.8 development plugin/main.jar:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat --offline "-Ptakdev.plugin=C:\Projects\ATAK-CIV-5.5.1.8-SDK\atak-gradle-takdev.jar" "-Ptak.sdk.main.jar=C:\Projects\ATAK-CIV-5.5.1.8-SDK\main.jar" :app:testCivDebugUnitTest :app:compileCivDebugJavaWithJavac --console=plain
+```
+
+The production CIV debug resource-link/Java compile and all 124 JVM tests pass
+(zero failures/errors, including 11 Garmin chat/handshake regressions)
+against that installed SDK, not ATAK 5.8 APIs. The configured ATAK target remains
+5.8.0; its remote SDK tuple is unavailable offline. Full target-SDK compatibility,
+APK packaging/signing and device acceptance still require the matching TAK SDK
+and TPP environment. No SDK, credentials, signing keys or local.properties are
+included.
+
+Hardware acceptance is pending: switch between every mode while discovery,
+GATT setup, queued writes, settings snapshots/certificate selection or Garmin
+callbacks are pending; ensure only the selected transport survives, old callbacks
+cannot affect the new session, and Android/Galaxy Wearable bonds survive switching
+and disconnect. Repeat BLE chat/groups, emergencies, managed/unmanaged provisioning,
+point update/delete and Bloodhound tests after mode switches/reconnect. On Garmin,
+verify direct/broadcast inbox/replies, false group capability and rejection of
+named groups without fallback, handoff-only status, SDK retry, and entity snapshots.
+Confirm a third TAK peer receives no deletion from either watch transport.
+
+SAMSUNG TRANSPORT DETAILS (SELECTOR-OWNED)
+
+Samsung Wearable mode is a persisted explicit opt-in, not the new-install default.
+Enable Bluetooth, grant Nearby Devices permissions to the
+ATAK host, and pair the Samsung watch through Galaxy Wearable first.
+This option reuses the existing Android Bluetooth bond established through
+Galaxy Wearable without changing or removing that pairing.
+Run the WearTAK watch app so its A11A BLE service is available.
+On Android 6 through 11, BLE scanning requires the ATAK host's location
+permission and legacy Bluetooth permissions. Android 12 and later use
+Nearby Devices permissions instead.
+
+Discovery uses the previously identified WearTAK address if still bonded;
+otherwise it scans for bonded devices advertising WearTAK's A11A service.
+A Samsung device name alone is never sufficient. This automatic route
+never creates or removes a bond. The original Scan/manual Connect route
+is retained and may request a new BLE bond for an unbonded selection.
+
+The selector controls WearTAK use, not pairing or Galaxy Wearable.
+Samsung Wearable mode can be selected before a candidate is available; it reports
+unavailability and retries, rather than claiming a reachable watch.
+While Android's Bluetooth service is off, the last confirmed bond is retained
+and reverified when Bluetooth returns (or invalidated by a bond-loss event).
+Without Nearby Devices permission the bond cannot be verified.
+The selected mode is never
+cleared by transient unreachability, Bluetooth-off, permission loss, or bond
+loss; retry discovery continues until the user changes mode or disconnects.
+Changing mode cancels discovery/setup/retries and disconnects only WearTAK's
+GATT session, never Galaxy Wearable or the system bond.
+
+CONNECTED, the connected card, and settings requests are enabled only
+after service discovery and successful A11B notification subscription
+(CCCD write). Discovery is bounded to 35 seconds and GATT setup to
+25 seconds. Failures/disconnects retry at 2, 4, 8, 16, 32, then at most
+60-second intervals; successful readiness resets the backoff. Bluetooth
+disabled and missing permissions are reported, and periodic retries recover
+after Bluetooth/permissions are restored. This does not request permissions
+on the user's behalf.
+
+SystemBondedWatchConnection.start()/stop() are the explicit activation seam:
+the selector stops this controller before activating another transport and
+starts it only when Samsung Wearable is selected. observe() remains available to
+other callers but is not used by this selector, so Traditional and Garmin
+have no competing Samsung Wearable observation.
+
+BLE settings are isolated per device/session. Mode changes, manual scans/
+connections, disconnects and trust loss clear the server adapter, editors,
+certificate display, callsign and snapshot state. Send stays disabled until
+this session receives a snapshot containing takServerList and reportIntSecs;
+partial settings_changed messages alone do not unlock a new session. Queued
+previous-session settings and certificate-picker callbacks are discarded.
+
+For end-to-end bond preservation use the corresponding WearOS Samsung
+system-pairing watch version (wearos-tak-civ-samsung-system-pairing,
+commit 9a90f83 or its successors). A TPP-signed Companion plugin cannot
+update or replace the watch app. The Companion source ZIP is for TPP
+build/signing and testing, not certification or a directly installable APK.
+Build configuration now targets ATAK 5.8.0; this source supersedes the
+50a0081 source package for ATAK 5.8 builds. Behavior on the requested
+ATAK 5.8 phone is not proven by local compilation/unit tests.
+TPP must provide its normal TAK SDK/build credentials; no local SDK,
+local.properties, generated outputs, or signing key is included.
 Paired BLE Bloodhound synchronization (WEARTAK-78)
 
 While connected to a bonded WearTAK watch, starting native ATAK Bloodhound
