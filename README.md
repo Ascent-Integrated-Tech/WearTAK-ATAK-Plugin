@@ -336,7 +336,8 @@ This adapter does not claim relay-result acknowledgements or TAK delivery.
 Garmin deletion is explicitly unsupported because this adapter has no negotiated
 shared-point revision session. It never emits the old external `t-x-d-d` deletion.
 WEARTAK-112's paired BLE local-only revision-gated removal remains intact.
-Garmin settings and Bloodhound synchronization remain outside this integration.
+Garmin settings use their existing settings adapter. Bloodhound now shares its
+existing native ATAK tracking backend with the Garmin Connect IQ transport.
 The later narrow live-entity reconciliation described below extends phone-to-Garmin
 map/emergency forwarding; watch-origin marker/emergency routing is unchanged.
 
@@ -419,6 +420,43 @@ verify direct/broadcast inbox/replies, false group capability and rejection of
 named groups without fallback, handoff-only status, SDK retry, and entity snapshots.
 Confirm a third TAK peer receives no deletion from either watch transport.
 
+### WEARTAK-128: Garmin Bloodhound synchronization
+
+Garmin Connect IQ negotiates Bloodhound version 1 in the existing session-bound
+`relay_hello` / `relay_status` exchange. This enables the same native ATAK
+Bloodhound coordinator used by the existing BLE route; no new tracking screen,
+menu, or reconnect behavior is added. The Garmin route is active only in Garmin
+mode and only for one current Connect IQ application link. Commands and results
+are sent back on that exact link; a second connected Garmin watch disables
+Bloodhound negotiation until the link is unambiguous.
+
+The Garmin `msgType` values are `bloodhound_control` and
+`bloodhound_control_result`, with the same `start`, `update`, and `stop` actions
+as the existing coordinator. Garmin frames add `relaySession`,
+`bloodhoundVersion: 1`, and UUID `command_id`; acknowledgements echo those values
+plus UUID `session_id`, `target_uid`, and `action`. The adapter rejects malformed
+identity, unsupported versions/actions, stale relay sessions, invalid locations,
+and acknowledgements that do not exactly match a pending command. Start and
+update targets require finite, in-range coordinates. Link or mode changes retire
+the session and discard pending correlation; nothing is replayed after reconnect.
+
+The companion starts native ATAK Bloodhound only for an existing map
+`PointMapItem` with a valid location. It does not fabricate a marker for a
+missing UID, overwrite an ATAK-owned CoT target from a watch update, cancel an
+alert, or send a TAK-server deletion. A successful result confirms the native
+tracking action on this phone only; it does not claim delivery to TAK servers or
+other peers. Garmin does not gain P12/server settings, reliable TAK delivery, or
+named-group chat capability.
+
+Focused CIV tests cover the Bloodhound coordinator, Garmin wire normalization,
+session/version fencing, command/result correlation, and capability negotiation.
+Validation uses Android SDK 36 and the installed ATAK 5.5.1.8 local development
+plugin/main.jar; it does not establish ATAK 5.8 API compatibility or paired
+hardware behavior. Hardware acceptance must verify native ATAK start/update/stop
+from both Garmin and phone, rejection of missing/self targets and stale replies,
+disconnect/mode changes without replay, and unchanged Samsung/Traditional BLE
+and local alert/marker lifetimes.
+
 SAMSUNG TRANSPORT DETAILS (SELECTOR-OWNED)
 
 Samsung Wearable mode is a persisted explicit opt-in, not the new-install default.
@@ -487,30 +525,31 @@ While connected to a bonded WearTAK watch, starting native ATAK Bloodhound
 shares the same CoT target UID with the watch. A watch start selects native
 ATAK Bloodhound tracking (not route navigation). Ending tracking on either
 device ends that shared tracking session on both. This never cancels the
-underlying alert or deletes its marker. A missing local target is represented
-by a local marker using the watch-supplied callsign and coordinates.
+underlying alert or deletes its marker. The target must already exist as a
+valid ATAK point; missing targets are rejected and never synthesized.
 
 The newline-delimited JSON protocol uses `msg_type=bloodhound_control` and a
-payload containing `action` (`start` or `stop`), UUID `session_id`, and
-`target_uid`. Start may also carry `target_callsign`, `lat`, `lon`, and `hae`;
-coordinates are required when ATAK does not already have the target.
-Replies use `msg_type=bloodhound_control_result`, with `session_id`, `action`,
-Boolean `ok`, and optional `error`. Local and watch failures are shown as
+payload containing `action` (`start`, `update`, or `stop`), UUID `session_id`,
+and `target_uid`. Starts and updates carry `target_callsign`, `lat`, `lon`, and
+optional `hae`; coordinates are validated before a command is applied. Replies
+use `msg_type=bloodhound_control_result`, with `session_id`, `action`, Boolean
+`ok`, and optional `error`. Garmin Connect IQ adds a current `relaySession`,
+`bloodhoundVersion: 1`, and UUID `command_id`, echoed in its result to fence
+replaced commands and links. Local and watch failures are shown as
 ATAK toast notifications and logged. Native event echoes and duplicate starts
 are suppressed; stops require both the current session ID and target UID.
 Repeated stops are acknowledged only for the original session/target pair.
-Command results correlate both action and session ID. Missing results time out
-after five seconds and failures are visibly reported; a queued BLE write alone
-does not confirm synchronization. Simultaneous starts awaiting acknowledgement
+Garmin command results correlate command, session, action and target IDs.
+Missing results time out after five seconds and failures are visibly reported;
+a queued BLE/Connect IQ write alone does not confirm synchronization.
+Simultaneous starts awaiting acknowledgement
 converge on the lexicographically smaller session ID. The losing incoming start
 receives `ok=false`, `error=Superseded by simultaneous tracking start`; a late
 negative result or timeout for the losing local start cannot clear the winner.
 `action=update` carries the same session ID, target UID, callsign and coordinates
-without an ACK. Native target point/callsign changes publish updates; matching
-incoming updates modify only this bridge's fallback marker, never an existing
-locally sourced target, and do not restart tracking or echo. Direct CoT import
-relinquishes fallback ownership to the local source. Stale, mismatched and
-disconnected updates are ignored.
+Native target point/callsign changes publish updates; matching incoming updates
+never overwrite the phone's authoritative map point, restart tracking, or echo.
+Stale, mismatched and disconnected updates are rejected.
 Non-bridge point/callsign edits relinquish ownership immediately, before
 the import-complete event, so companion snapshots cannot overwrite a newly
 authoritative source. ATAK's same-UID MarkerImporter updates the existing marker

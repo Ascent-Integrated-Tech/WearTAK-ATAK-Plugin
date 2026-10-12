@@ -12,14 +12,29 @@ final class GarminChatPolicy {
     private GarminChatPolicy() {}
 
     static Map<String, Object> relayStatus(JSONObject hello) {
+        return relayStatus(hello, true);
+    }
+
+    static Map<String, Object> relayStatus(JSONObject hello, boolean bloodhoundSupported) {
         Object session = hello.opt("relaySession");
-        if (!(session instanceof String) || ((String) session).trim().isEmpty()) {
+        if (!(session instanceof String) || ((String) session).trim().isEmpty()
+                || ((String) session).length() > 128) {
             throw new IllegalArgumentException("Missing Garmin relay session");
+        }
+        for (int i = 0; i < ((String) session).length(); i++) {
+            if (Character.isISOControl(((String) session).charAt(i)))
+                throw new IllegalArgumentException("Missing Garmin relay session");
         }
         Map<String, Object> status = new HashMap<>();
         status.put("relaySession", session);
         status.put("reliableDelivery", false);
         status.put("chatGroups", false);
+        Object version = hello.opt("bloodhoundVersion");
+        if (bloodhoundSupported && version instanceof Number
+                && ((Number) version).doubleValue() == 1.0d) {
+            status.put("bloodhoundVersion", 1);
+            status.put("bloodhoundControl", true);
+        }
         return status;
     }
 
