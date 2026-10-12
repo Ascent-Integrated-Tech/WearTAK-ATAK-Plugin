@@ -65,6 +65,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile Boolean lastSettingsApplyResult = null;
 
     private WearTakBleClient bleClient;
+    private CheckBox autoReconnectCB;
     private SystemBondedWatchConnection systemBondedConnection;
     private boolean systemBondedEnabled;
     private TextView systemBondedWatchStatus;
@@ -86,7 +87,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     stopPhoneAlertForwarding();
                     if (bleCotBridge != null) bleCotBridge.stopChatForwarding();
                     if (systemBondedConnection != null) systemBondedConnection.stop();
-                    if (bleClient != null) bleClient.stop();
+                    if (bleClient != null) {
+                        bleClient.setAutomaticReconnectAllowed(false);
+                        bleClient.stop();
+                    }
                     if (garminClient != null) garminClient.stop();
                     systemBondedConnection = null;
                     bleClient = null;
@@ -369,7 +373,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void initializeBleTransport(final long token) {
         systemBondedEnabled = connectionModes.getMode() == ConnectionModeController.Mode.SAMSUNG;
         if (bleClient == null) {
-            bleClient = new WearTakBleClient(pluginContext, connected -> {
+            bleClient = new WearTakBleClient(pluginContext, null);
+        }
+        bleClient.setStatusListener(connected -> {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
@@ -417,7 +423,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     updateSystemBondedControl();
                 });
             });
-        }
 
         if (bleCotBridge == null) {
             bleCotBridge = new BleCotBridge();
@@ -428,6 +433,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             bloodhoundBridge = new BloodhoundBridge(MapView.getMapView(), bleClient);
         }
         registerMapItemListener();
+        bleClient.setAutomaticReconnectAllowed(
+                connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL);
         bleClient.start();
 
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
@@ -658,6 +665,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         systemBondedWatchStatus.setVisibility(mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
         paneView.findViewById(R.id.garminPanel).setVisibility(
                 mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
+        if (autoReconnectCB != null) {
+            autoReconnectCB.setEnabled(mode == ConnectionModeController.Mode.TRADITIONAL);
+            autoReconnectCB.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL
+                    ? View.VISIBLE : View.GONE);
+            autoReconnectCB.setChecked(bleClient != null && bleClient.isAutoReconnectEnabled());
+            paneView.findViewById(R.id.autoReconnectDescription).setVisibility(
+                    mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
+        }
         if (connectionStatusTV != null) {
             connectionStatusTV.setText(mode == ConnectionModeController.Mode.GARMIN
                     ? garminClient != null ? garminClient.getStatus() : "Garmin Connect IQ is off."
@@ -899,6 +914,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             garminToggleButton.setOnClickListener(v -> {
                 connectionModes.restart();
             });
+            autoReconnectCB = paneView.findViewById(R.id.autoReconnectCheckBox);
+            autoReconnectCB.setChecked(bleClient != null && bleClient.isAutoReconnectEnabled());
+            autoReconnectCB.setOnClickListener(v -> {
+                if (connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL
+                        && bleClient != null) {
+                    bleClient.setAutoReconnectEnabled(autoReconnectCB.isChecked());
+                }
+            });
             scanButton = paneView.findViewById(R.id.scanButton);
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
@@ -937,7 +960,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 disableSystemBondedForManualUse();
                 clearSessionSettings();
                 int sessionId = ++scanSessionCount;
-                if (bleClient != null) bleClient.resetSession("UI scan " + sessionId);
+                if (bleClient != null) {
+                    bleClient.pauseAutoReconnect();
+                    bleClient.resetSession("UI scan " + sessionId);
+                }
 
                 scannedDevices.clear();
                 if (deviceAdapter != null) {
@@ -1177,6 +1203,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (scanButton != null) {
                         scanButton.setText(SCAN_TEXT_REFRESH);
                     }
+                    if (bleClient != null) bleClient.resumeAutoReconnect();
                 });
             }
 
@@ -1191,6 +1218,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (scanButton != null) {
                         scanButton.setText(SCAN_TEXT_REFRESH);
                     }
+                    if (bleClient != null) bleClient.resumeAutoReconnect();
                 });
             }
         });
