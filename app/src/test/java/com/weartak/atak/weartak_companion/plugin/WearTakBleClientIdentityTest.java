@@ -21,4 +21,28 @@ public class WearTakBleClientIdentityTest {
     public void changedIdentityIsRejected() {
         assertTrue(WearTakBleClient.hasPairedIdentityMismatch("watch-1", "watch-2"));
     }
+
+    @Test
+    public void bondTrustLossReasonsClearPairedIdentity() {
+        String[] reasons = {
+                "bond_recovery_not_found",
+                "bond_recovery_scan_error",
+                "bond_lost_before_connect",
+                "bond_lost_before_write",
+                "bond_lost_during_tx",
+                "bond_cancelled",
+                "bond_lost"
+        };
+
+        for (String reason : reasons) {
+            assertTrue(reason, WearTakBleClient.shouldClearPairedIdentity(reason));
+        }
+        assertTrue(WearTakBleClient.shouldClearPairedIdentity("watch_uid_mismatch"));
+    }
+
+    @Test
+    public void unrelatedFailureDoesNotClearPairedIdentity() {
+        assertFalse(WearTakBleClient.shouldClearPairedIdentity("gatt_status_133"));
+        assertFalse(WearTakBleClient.shouldClearPairedIdentity(null));
+    }
 }
