@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_desc">This plugin functions as a BLE-based CoT forwarder and reconstructor between WearTAK and ATAK EUDs, as well as allowing WearTAK settings to be configured via ATAK EUD.\n\nDISTRIBUTION STATEMENT A. Approved for public release: distribution unlimited.</string>
+    <string name="app_desc">This plugin relays CoT between WearTAK watches and ATAK EUDs using the existing direct BLE transport for Samsung/Wear OS watches and an optional Garmin Connect IQ transport via Garmin Connect Mobile. It also allows WearTAK settings to be configured via ATAK EUD.\n\nDISTRIBUTION STATEMENT A. Approved for public release: distribution unlimited.</string>
     <!-- will be wired in for 4.4 if the above is deemed acceptable -->
     <string name="app_distro_statement">DISTRIBUTION STATEMENT A. Approved for public release: distribution unlimited.</string>
 
