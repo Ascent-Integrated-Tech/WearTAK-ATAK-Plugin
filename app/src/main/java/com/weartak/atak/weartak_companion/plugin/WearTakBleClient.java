@@ -530,11 +530,7 @@ public class WearTakBleClient {
         return candidates;
     }
 
-    /**
-     * Previously A11A-identified bond, independent of reachability. Android may report
-     * BOND_NONE with its Bluetooth service powered off; retain the last confirmed bond
-     * until the radio can verify it again (or an explicit bond-loss broadcast arrives).
-     */
+    /** Returns the saved system bond only when Bluetooth is enabled and the bond is verified. */
     public synchronized DiscoveredDevice getKnownBondedCompanion() {
         if (!started) start();
         if (bluetoothAdapter == null || !hasConnectPermission()) return null;
@@ -1205,7 +1201,7 @@ public class WearTakBleClient {
                 && !expectedUid.equals(observedUid);
     }
 
-    private static boolean shouldClearPairedIdentity(String reason) {
+    static boolean shouldClearPairedIdentity(String reason) {
         return reason != null && (reason.startsWith("bond_")
                 || "watch_uid_mismatch".equals(reason));
     }
