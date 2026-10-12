@@ -70,6 +70,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private boolean systemBondedEnabled;
     private TextView systemBondedWatchStatus;
     private GarminConnectIqClient garminClient;
+    private GarminEntityForwarder garminEntities;
+    private GarminMapEntitySource garminEntitySource;
     private volatile boolean garminEnabled;
     private Button connectionModeButton;
     private TextView connectionModeAdvisory;
@@ -79,6 +81,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 @Override public void stop() {
                     ++scanSessionCount;
                     systemBondedEnabled = garminEnabled = false;
+                    if (garminEntities != null) garminEntities.close();
+                    garminEntities = null;
+                    garminEntitySource = null;
                     if (bloodhoundBridge != null) {
                         bloodhoundBridge.close();
                         bloodhoundBridge = null;
@@ -737,19 +742,34 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             @Override
                             public void onConnectionChanged(boolean connected) {
                                 mainHandler.post(() -> {
-                                    if (connectionModes.isCurrent(token)) renderGarminConnection(connected);
+                                    if (!connectionModes.isCurrent(token)) return;
+                                    renderGarminConnection(connected);
+                                    if (garminEntities != null) garminEntities.refreshLinks();
                                 });
                             }
 
                             @Override
                             public void onMessageReceived(JSONObject envelope) {
+                                // SDK ingress uses the link-scoped overload below.
+                            }
+
+                            @Override
+                            public void onMessageReceived(JSONObject envelope, GarminEntityForwarder.Link link) {
                                 mainHandler.post(() -> {
-                                    if (connectionModes.isCurrent(token)) handleGarminMessage(envelope);
+                                    if (connectionModes.isCurrent(token) && link != null && link.isCurrent())
+                                        handleGarminMessage(envelope, link);
                                 });
                             }
                         });
             renderGarminConnecting();
             bleCotBridge.startChatForwarding(garminClient);
+            GarminConnectIqClient owner = garminClient;
+            garminEntitySource = new GarminMapEntitySource(MapView.getMapView(), bleCotBridge);
+            garminEntities = new GarminEntityForwarder(garminEntitySource, owner::entityLinks,
+                    runnable -> mainHandler.post(runnable),
+                    () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
+            garminEntities.start();
+            startPhoneAlertForwarding(token);
             garminClient.start();
     }
 
@@ -772,7 +792,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_neutral);
     }
 
-    private void handleGarminMessage(JSONObject envelope) {
+    private void handleGarminMessage(JSONObject envelope, GarminEntityForwarder.Link link) {
         if (!garminEnabled) return;
         String msgType = envelope.optString("msgType", "");
         Log.i(TAG, "Garmin Connect IQ message: " + msgType);
@@ -782,19 +802,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if ("entity_sync_request".equals(msgType)) {
             JSONObject requestPayload = envelope.optJSONObject("payload");
             int requestedLimit = requestPayload == null ? 50 : requestPayload.optInt("limit", 50);
-            List<Map<String, Object>> entities = bleCotBridge == null
-                    ? Collections.emptyList()
-                    : bleCotBridge.getGarminEntitySnapshot(requestedLimit);
-            Map<String, Object> responsePayload = new HashMap<>();
-            responsePayload.put("entities", entities);
-            if (garminClient == null || !garminClient.sendMessage("entities", responsePayload)) {
+            if (garminEntities == null || !garminEntities.sendSnapshot(link, requestedLimit)) {
                 Log.w(TAG, "Unable to send Garmin entity snapshot");
                 if (garminConnectionStatusTV != null) {
                     garminConnectionStatusTV.setText("Garmin connected, but entity sync could not be sent.");
                 }
             } else if (garminConnectionStatusTV != null) {
                 garminConnectionStatusTV.setText("Garmin watch active: sending "
-                        + entities.size() + " nearby unit(s).");
+                        + garminEntities.snapshotSize() + " nearby unit(s).");
             }
             return;
         }
@@ -853,6 +868,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void forwardPhoneEmergencyToWatch(CotEvent event, android.os.Bundle extras) {
+        if (garminEnabled && garminEntitySource != null) {
+            garminEntitySource.emergency(event);
+            return;
+        }
         WearTakBleClient client = bleClient;
         long session = client == null ? -1 : client.getReadySession();
         if (event == null || session < 0

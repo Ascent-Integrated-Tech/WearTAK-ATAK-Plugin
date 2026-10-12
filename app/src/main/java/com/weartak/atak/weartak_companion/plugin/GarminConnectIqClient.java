@@ -31,6 +31,9 @@ public final class GarminConnectIqClient {
         void onStatusChanged(String status);
         void onConnectionChanged(boolean connected);
         void onMessageReceived(JSONObject envelope);
+        default void onMessageReceived(JSONObject envelope, GarminEntityForwarder.Link link) {
+            onMessageReceived(envelope);
+        }
     }
 
     private static final class DeviceApp {
@@ -39,6 +42,8 @@ public final class GarminConnectIqClient {
         boolean appEventsRegistered;
         boolean appInfoPending;
         volatile boolean connected;
+        GarminEntityForwarder.Link entityLink;
+        long linkGeneration;
         DeviceApp(IQDevice device) {
             this.device = device;
         }
@@ -283,11 +288,13 @@ public final class GarminConnectIqClient {
 
         boolean accepted = false;
         for (DeviceApp target : targets) {
+            final long link = target.linkGeneration;
             try {
                 connectIQ.sendMessage(target.device, target.app, envelope,
                         (device, app, messageStatus) -> {
                             synchronized (GarminConnectIqClient.this) {
-                                if (!isCurrentDevice(target)) return;
+                                if (!isCurrentDevice(target) || !target.connected
+                                        || target.linkGeneration != link) return;
                                 if (messageStatus == ConnectIQ.IQMessageStatus.SUCCESS) {
                                     Log.i(TAG, "Sent " + msgType + " to " + device.getFriendlyName());
                                 } else {
@@ -305,6 +312,48 @@ public final class GarminConnectIqClient {
             }
         }
         return accepted;
+    }
+
+    synchronized List<GarminEntityForwarder.Link> entityLinks() {
+        List<GarminEntityForwarder.Link> links = new ArrayList<>();
+        synchronized (lock) {
+            for (DeviceApp entry : devices.values()) {
+                if (!isCurrentDevice(entry) || !entry.connected || entry.app == null
+                        || !entry.appEventsRegistered) continue;
+                if (entry.entityLink == null) {
+                    entry.entityLink = new GarminEntityForwarder.Link() {
+                        @Override public boolean isCurrent() {
+                            synchronized (GarminConnectIqClient.this) {
+                                return isCurrentDevice(entry) && entry.connected
+                                        && entry.appEventsRegistered && entry.entityLink == this;
+                            }
+                        }
+                        @Override public boolean send(String type, Map<String, Object> payload) {
+                            synchronized (GarminConnectIqClient.this) {
+                                if (!isCurrent()) return false;
+                                Map<String, Object> envelope = new HashMap<>();
+                                envelope.put("msgType", type);
+                                envelope.put("payload", payload);
+                                try {
+                                    connectIQ.sendMessage(entry.device, entry.app, envelope,
+                                            (device, app, status) -> {
+                                                if (isCurrent() && status != ConnectIQ.IQMessageStatus.SUCCESS)
+                                                    Log.w(TAG, "Garmin entity handoff failed: " + status);
+                                            });
+                                    return true;
+                                } catch (InvalidStateException | ServiceUnavailableException
+                                        | IllegalArgumentException e) {
+                                    Log.w(TAG, "Garmin entity handoff rejected", e);
+                                    return false;
+                                }
+                            }
+                        }
+                    };
+                }
+                links.add(entry.entityLink);
+            }
+        }
+        return links;
     }
 
     private boolean isCurrentDevice(DeviceApp entry) {
@@ -340,7 +389,20 @@ public final class GarminConnectIqClient {
             connectIQ.registerForDeviceEvents(device, (changedDevice, newStatus) -> {
                 synchronized (GarminConnectIqClient.this) {
                     if (!isCurrentDevice(entry)) return;
-                    entry.connected = newStatus == IQDevice.IQDeviceStatus.CONNECTED;
+                    boolean connected = newStatus == IQDevice.IQDeviceStatus.CONNECTED;
+                    if (entry.connected != connected) {
+                        entry.linkGeneration++;
+                        entry.entityLink = null;
+                        if (entry.appEventsRegistered && entry.app != null) {
+                            try {
+                                connectIQ.unregisterForApplicationEvents(entry.device, entry.app);
+                            } catch (InvalidStateException | ServiceUnavailableException e) {
+                                Log.w(TAG, "Unable to retire Garmin app subscription", e);
+                            }
+                        }
+                        entry.appEventsRegistered = false;
+                    }
+                    entry.connected = connected;
                     publishConnectionState();
                     if (entry.connected) {
                         loadApplication(entry);
@@ -421,16 +483,18 @@ public final class GarminConnectIqClient {
     }
 
     private synchronized void registerAppEvents(DeviceApp entry) {
+        final long link;
         synchronized (lock) {
             if (!isCurrentDevice(entry) || entry.app == null || entry.appEventsRegistered) return;
             entry.appEventsRegistered = true;
+            link = entry.linkGeneration;
         }
 
         try {
             connectIQ.registerForAppEvents(entry.device, entry.app,
                     (device, app, messageData, messageStatus) -> {
                         synchronized (GarminConnectIqClient.this) {
-                            if (!isCurrentDevice(entry)) return;
+                            if (!isCurrentDevice(entry) || entry.linkGeneration != link) return;
                             if (messageStatus != ConnectIQ.IQMessageStatus.SUCCESS) {
                                 Log.w(TAG, "Garmin message receive failed: " + messageStatus);
                                 publishStatus("Garmin receive error: " + messageStatus);
@@ -445,12 +509,14 @@ public final class GarminConnectIqClient {
                                 if (item instanceof Map) {
                                     JSONObject envelope = toJsonObject((Map<?, ?>) item);
                                     if (envelope != null && listener != null) {
-                                        listener.onMessageReceived(envelope);
+                                        entityLinks();
+                                        listener.onMessageReceived(envelope, entry.entityLink);
                                     }
                                 }
                             }
                         }
                     });
+            publishConnectionState();
             publishStatus("WearTAK found on " + entry.device.getFriendlyName()
                     + ". " + WATCH_RELAY_INSTRUCTIONS);
         } catch (InvalidStateException | ServiceUnavailableException e) {

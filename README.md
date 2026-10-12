@@ -322,9 +322,62 @@ This adapter does not claim relay-result acknowledgements or TAK delivery.
 Garmin deletion is explicitly unsupported because this adapter has no negotiated
 shared-point revision session. It never emits the old external `t-x-d-d` deletion.
 WEARTAK-112's paired BLE local-only revision-gated removal remains intact.
-Garmin settings, Bloodhound synchronization and phone live marker/emergency
-forwarding remain outside this integration; Garmin watch-origin marker/emergency
-and requested nearby entity snapshots retain their existing route.
+Garmin settings and Bloodhound synchronization remain outside this integration.
+The later narrow live-entity reconciliation described below extends phone-to-Garmin
+map/emergency forwarding; watch-origin marker/emergency routing is unchanged.
+
+### Garmin live entities / emergency lifecycle (narrow MR !15 reconciliation)
+
+Based on canonical `develop` `c729e014` after MR !19, not the older combined MR !15
+branch (`8a18f210`). Traditional BLE auto-reconnect remains default-off, Traditional-only,
+persisted in host preferences; Samsung bond coordination and all current chat,
+provisioning, BLE alert/point/Bloodhound and paired-local deletion policies remain intact.
+There are no layout, picker or preference changes.
+
+One map subscription observes add/import/remove, point, metadata and type changes.
+Each connected Garmin application link gets its own fenced handoff and bounded
+50-entity deduplication cache. Link readiness sends an initial nearest-first snapshot
+(at most 50); `entity_sync_request` uses the same normalization and replies only to
+the requesting link. Live changes use `msgType: entity`; snapshots use `entities`
+with `payload.entities`. Dictionary metadata includes callsign/team/role,
+`senderUID`, original `time`/`start`/`stale`, and emergency category/active/cancel.
+The canonical Garmin receiver assigns `__source: phone-relay`.
+
+Invalid, zero-placeholder or explicitly expired non-alert positions are rejected.
+A snapshot requires a valid, non-expired phone self position, without last-fix fallback.
+Active alerts with unusable coordinates carry no coordinates: the Garmin receiver
+can show unknown location or retain only its own prior same-source valid location.
+Cancellation does not require a fix; it carries `state: CANCEL`, `active: false`
+and `emergency.cancel: true`. Expired alerts keep their original stale deadline for
+the watch's stale display rather than being fabricated into deletion/cancellation.
+Self PLI, tracked watch-origin alerts and Garmin-origin points are not echoed.
+
+Stop/mode switch removes the exact map/item observers and existing emergency
+broadcast/fallback listener. Captured queued updates and snapshot replies cannot
+move onto a reconnected, replacement or different watch link. Item removal drops
+pending ordinary-point sends, but does not send generic `marker_delete`, external
+deletion, or invented emergency cancellation. Garmin retains its existing bounded
+map and five-minute ordinary-entity prune; alerts retain Garmin's source/stale rules.
+
+This is SDK handoff only: `reliableDelivery: false`, named groups fail closed,
+and there is no watch acknowledgement or guaranteed emergency delivery.
+MR !15's settings ACK + snapshot transaction and broader protocol/build/test-provenance
+bundle are **not** imported or declared complete. No watch installation is performed.
+
+Focused CIV JVM validation covers normalization, snapshot bounds/order, listener
+start/stop/restart, actual mode switches, removal/cancellation/expiry, SDK-scoped
+dictionary handoff, link replacement and retired callbacks, plus existing BLE
+reconnect, chat, settings, alert, paired-delete and Bloodhound regressions.
+Production CIV Java compilation and resource linking use Android SDK 36 and the
+local ATAK 5.5.1.8 development plugin/main.jar with the offline flags below.
+The focused run passes 123 JVM tests (18 newly added). The native ATAK observer/
+broadcast adapter is compile-checked, not exercised in an Android/ATAK runtime by
+the fake-source/SDK JVM tests. These checks do not validate ATAK 5.8 APIs or physical
+Garmin/phone operation.
+Hardware acceptance remains required: update nearby units/points, issue/cancel/expire
+phone and remote emergencies (including loss of fix), reconnect/replace the watch
+with queued callbacks, request a snapshot with two paired watches, switch all modes,
+and confirm no echo, third-device deletion, named-group broadcast or false delivery ACK.
 
 Reconciliation validation uses Gradle 8.14.3/AGP 8.13.2, Android SDK 36 and
 the installed ATAK 5.5.1.8 development plugin/main.jar:
