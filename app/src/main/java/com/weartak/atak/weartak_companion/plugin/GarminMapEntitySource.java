@@ -56,14 +56,14 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
 
     private synchronized void observe(MapItem item) {
         if (listener == null || !(item instanceof PointMapItem) || !observed.add((PointMapItem) item)) return;
-        item.addOnMetadataChangedListener(metadata);
+        MetadataObservers.add(item, metadata);
         item.addOnTypeChangedListener(type);
         ((PointMapItem) item).addOnPointChangedListener(point);
     }
 
     private void unobserve(PointMapItem item) {
         observed.remove(item);
-        item.removeOnMetadataChangedListener(metadata);
+        MetadataObservers.remove(item, metadata);
         item.removeOnTypeChangedListener(type);
         item.removeOnPointChangedListener(point);
     }

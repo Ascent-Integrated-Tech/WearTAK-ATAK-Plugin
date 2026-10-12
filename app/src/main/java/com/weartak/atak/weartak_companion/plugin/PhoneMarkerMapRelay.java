@@ -203,7 +203,7 @@ final class PhoneMarkerMapRelay {
         Marker marker = (Marker) item;
         markers.put(marker, null);
         marker.addOnPointChangedListener(pointListener);
-        marker.addOnMetadataChangedListener(metadataListener);
+        MetadataObservers.add(marker, metadataListener);
         marker.addOnTypeChangedListener(typeListener);
     }
 
@@ -211,7 +211,7 @@ final class PhoneMarkerMapRelay {
         Runnable pending = markers.remove(marker);
         if (pending != null) handler.removeCallbacks(pending);
         marker.removeOnPointChangedListener(pointListener);
-        marker.removeOnMetadataChangedListener(metadataListener);
+        MetadataObservers.remove(marker, metadataListener);
         marker.removeOnTypeChangedListener(typeListener);
     }
 
