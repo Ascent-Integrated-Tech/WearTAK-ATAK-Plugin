@@ -29,7 +29,7 @@ public class PhoneRelayIntegrationTest {
         assertTrue(points.forward(marker("initial"), 7, 7, 0,
                 (json, session) -> queue.add(json)));
         queue.add(ChatRelayPayloadBuilder.build("self", "contact", "chat-id", "CONTACT",
-                "hello", 1, "conversation", "Conversation").toString());
+                "hello", 1, "conversation", "Conversation", true, new String[]{"self", "contact"}).toString());
         queue.add(SettingsPayloadBuilder.build(Collections.emptyList(),
                 null, null, null, null, false).toString());
         assertTrue(emergencies.forward("b-a-o", ALERT, true, false, queue::add));

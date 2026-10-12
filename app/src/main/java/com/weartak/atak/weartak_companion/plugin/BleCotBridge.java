@@ -9,6 +9,10 @@ import android.util.Log;
 
 import com.atakmap.android.chat.ChatManagerMapComponent;
 import com.atakmap.android.chat.ChatMessageParser;
+import com.atakmap.android.contact.Contact;
+import com.atakmap.android.contact.Contacts;
+import com.atakmap.android.contact.GroupContact;
+import com.atakmap.android.contact.IndividualContact;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.Marker;
@@ -84,9 +88,12 @@ public class BleCotBridge {
         if (client == null) return;
 
         try {
+            String conversationUid = message.getString("conversationId", "");
             JSONObject envelope = ChatRelayPayloadBuilder.build(myUid, senderUid, messageId,
                     senderCallsign, text, message.getLong("receiveTime", System.currentTimeMillis()),
-                    message.getString("conversationId", ""), message.getString("conversationName", ""));
+                    conversationUid, message.getString("conversationName", ""),
+                    Contacts.getInstance().getContactByUuid(conversationUid) instanceof GroupContact,
+                    message.getStringArray("destinations"));
             if (envelope == null) return;
             if (!client.writeJsonLineToWatch(envelope.toString())) {
                 Log.w(TAG, "Could not relay ATAK chat message to watch");
@@ -545,6 +552,12 @@ public class BleCotBridge {
                 .sendMessage(text, convos);
     }
 
+    private static ChatManagerMapComponent requireChatManager() {
+        ChatManagerMapComponent manager = ChatManagerMapComponent.getInstance();
+        if (manager == null) throw new IllegalStateException("ATAK chat manager unavailable");
+        return manager;
+    }
+
     public void sendChat(String envelopeJson) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
@@ -571,11 +584,53 @@ public class BleCotBridge {
             //   dstUid      = roomUid
             //   dstChatroom = roomTitle
             //
-            String dstUid      = optString(p, "rmUid", optString(p, "roomUid", "All Chat Rooms"));
+            String dstUid      = optString(p, "rmUid", optString(p, "roomUid", ""));
             String dstChatroom = optString(p, "rmTitle", optString(p, "roomTitle", dstUid));
 
             // Message text
             String chatMsg = optString(p, "msg", "");
+            if (ChatReplyRouter.route(dstUid, p.optBoolean("isGroup", false), chatMsg,
+                    new ChatReplyRouter.Targets<Contact>() {
+                        public Contact find(String uid) {
+                            return Contacts.getInstance().getContactByUuid(uid);
+                        }
+
+                        public boolean isGroup(Contact target) {
+                            return target instanceof GroupContact;
+                        }
+
+                        public boolean isWritable(Contact target) {
+                            return !((GroupContact) target).getUnmodifiable();
+                        }
+
+                        public java.util.List<String> recipients(Contact target) {
+                            java.util.List<String> members = new java.util.ArrayList<>();
+                            for (Contact member : target.getFiltered(true, true)) {
+                                if (member instanceof IndividualContact && !myUid.equals(member.getUID())) {
+                                    if (member.getExtras().getBoolean("fakeGroup", false)
+                                            || member instanceof com.atakmap.android.contact.TadilJContact
+                                            || "All Chat Rooms".equals(member.getUID())) {
+                                        throw new IllegalArgumentException("Named group contains a broadcast destination");
+                                    }
+                                    if (!members.contains(member.getUID())) members.add(member.getUID());
+                                }
+                            }
+                            return members;
+                        }
+
+                        public void sendGroup(String text, Contact target, String[] recipients) {
+                            ChatManagerMapComponent manager = requireChatManager();
+                            if (manager.sendMessage(text, (GroupContact) target, recipients, recipients) == null) {
+                                throw new IllegalStateException("ATAK group send failed");
+                            }
+                        }
+
+                        public void sendBroadcast(String text) {
+                            Contact all = ChatManagerMapComponent.getChatBroadcastContact();
+                            if (all == null) throw new IllegalStateException("ATAK broadcast contact unavailable");
+                            requireChatManager().sendMessage(text, java.util.Collections.singletonList(all));
+                        }
+                    })) return;
 
             // Attribute watch-originated messages to the paired phone in ATAK.
             String senderCallsign = pluginCallsign;
