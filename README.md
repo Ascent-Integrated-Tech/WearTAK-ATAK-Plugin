@@ -15,6 +15,43 @@ emergency alerts, and GeoChat messages. An optional Garmin Connect IQ
 relay is being developed on the separate garmin-connect-iq-integration
 branch.
 
+GROUP CHAT (WEARTAK-118)
+
+Incoming remote ATAK chat is forwarded with the normalized conversation UID/title,
+an explicit `isGroup` flag, and `participantUids` from ATAK's chat bundle. Local direct
+conversations normalize to the remote sender; named conversations must resolve to
+an actual ATAK GroupContact. All Chat Rooms remains an explicit broadcast room.
+Matching watches aggregate different senders in the same group and reply with its
+room UID/title and group flag. Legacy watch replies to known group UIDs also work.
+
+Named group replies resolve the current writable GroupContact and its filtered
+individual recipients, then call ATAK's
+`sendMessage(String, GroupContact, String[], String[])` with the group identity and
+recipient UIDs. Unknown/unwritable groups, empty recipients, missing targets, and
+missing chat managers fail with logs; they never fall back to broadcast. Only the
+explicit All Chat Rooms target uses the existing broadcast-contact API. Direct
+GeoChat retains its existing dispatch path.
+
+Named incoming groups must list the paired phone among their recipient UIDs.
+Named replies containing ATAK broadcast-like/fake-group or TADIL-J destinations
+are rejected because ATAK would otherwise promote those recipients to broadcast.
+
+This supports existing groups, not watch group creation or historical chat sync.
+Phone-authored outgoing messages and watch messages attributed to the phone are
+not mirrored back; incoming remote messages are relayed while BLE is connected.
+BLE enqueue does not acknowledge watch receipt, and no private-messenger integration
+is added. Older watch builds still treat received chat as sender DMs; deploy both
+updated builds for group-room support.
+
+Hardware acceptance remains pending: with both updated builds and BLE connected,
+send to an existing group containing the paired phone from two remote ATAK devices.
+Verify one watch room with both sender callsigns; preset and keyboard replies must
+reach that ATAK group and its members, not an outsider. Test a simultaneous direct
+chat, All Chat Rooms, duplicates/echo suppression, and a new inbox room arriving
+while replying. Delete or empty the phone group before replying and verify rejection
+logs without broadcast. Repeat reception/replies after BLE reconnect (no offline
+history guarantee). Standalone TAK watch tests are documented in the watch README.
+
 While a bonded WearTAK watch is connected over BLE, incoming ATAK emergency
 CoT (`b-a-o`, `b-a-o-*`, and `b-a-g`) and cancellations are forwarded to
 the watch's existing map/Bloodhound alert handling. The BLE envelope uses
