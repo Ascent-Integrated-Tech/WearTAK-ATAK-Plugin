@@ -147,6 +147,15 @@ public final class SystemBondedWatchConnection {
                     if (current(token) && attempting && !connecting) failed(reason);
                 });
             }
+
+            @Override
+            public void onAmbiguous(java.util.List<WearTakBleClient.DiscoveredDevice> devices) {
+                scheduler.execute(() -> {
+                    if (current(token) && attempting && !connecting) {
+                        failed("Multiple bonded WearTAK watches require selection");
+                    }
+                });
+            }
         });
     }
 

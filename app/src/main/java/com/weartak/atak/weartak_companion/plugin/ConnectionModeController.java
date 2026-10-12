@@ -23,8 +23,8 @@ public final class ConnectionModeController {
 
     private final Transport transport;
     private Mode mode = Mode.TRADITIONAL;
-    private long generation;
-    private boolean running;
+    private volatile long generation;
+    private volatile boolean running;
 
     public ConnectionModeController(Transport transport) { this.transport = transport; }
 

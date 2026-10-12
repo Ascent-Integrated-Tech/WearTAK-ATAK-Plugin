@@ -501,7 +501,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
         });
-        if (systemBondedConnection == null) {
+        if (systemBondedEnabled && systemBondedConnection == null) {
             systemBondedConnection = new SystemBondedWatchConnection(
                     new SystemBondedWatchConnection.Scheduler() {
                         @Override public void execute(Runnable action) { runOnMain(action); }
@@ -543,7 +543,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         }
                     });
         }
-        if (systemBondedEnabled) systemBondedConnection.start();
+        if (systemBondedEnabled && systemBondedConnection != null) {
+            systemBondedConnection.start();
+        }
         updateSystemBondedControl();
     }
 
@@ -587,7 +589,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             connectionStatusTV.setText(mode == ConnectionModeController.Mode.GARMIN
                     ? garminClient != null ? garminClient.getStatus() : "Garmin Connect IQ is off."
                     : bleClient != null && bleClient.isConnected()
-                    ? "CONNECTED" : systemBondedEnabled ? systemBondedConnection.getStatus() : "DISCONNECTED");
+                    ? "CONNECTED" : systemBondedEnabled && systemBondedConnection != null
+                    ? systemBondedConnection.getStatus() : "DISCONNECTED");
         }
         updateSystemBondedControl();
     }

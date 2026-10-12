@@ -198,6 +198,7 @@ public class WearTakBleClient {
         final long token = sessionGeneration;
         pendingBondDevice = null;
         clearPreferredAddressIfMatches(address);
+        if (shouldClearPairedIdentity(reason)) clearPairedDeviceIdentity();
 
         JsonListener l = jsonListener.get();
         if (l != null) l.onTrustLost(address, reason);
@@ -268,6 +269,10 @@ public class WearTakBleClient {
     public interface BondedCompanionListener {
         void onFound(DiscoveredDevice device);
         void onUnavailable(String reason);
+
+        default void onAmbiguous(List<DiscoveredDevice> devices) {
+            onUnavailable("Multiple bonded WearTAK watches are available");
+        }
     }
 
     public int timeoutSeconds = 30;
@@ -480,24 +485,23 @@ public class WearTakBleClient {
         scanForDevices(new ScanListener() {
             @Override
             public void onDeviceFound(DiscoveredDevice device) {
-                if (device == null || device.address == null || !isBondedAddress(device.address)
-                        || !completed.compareAndSet(false, true)) {
-                    return;
-                }
-                stopScanInternal("bonded companion found");
-                savePreferredAddress(device.address);
-                listener.onFound(device);
+                // Select only after the scan completes so multiple bonded watches are not
+                // silently resolved by advertisement order.
             }
 
             @Override
             public void onScanFinished(List<DiscoveredDevice> devices) {
                 if (!completed.compareAndSet(false, true)) return;
-                for (DiscoveredDevice device : devices) {
-                    if (device != null && device.address != null && isBondedAddress(device.address)) {
-                        savePreferredAddress(device.address);
-                        listener.onFound(device);
-                        return;
-                    }
+                List<DiscoveredDevice> candidates = bondedCandidates(devices);
+                if (candidates.size() == 1) {
+                    DiscoveredDevice selected = candidates.get(0);
+                    savePreferredAddress(selected.address);
+                    listener.onFound(selected);
+                    return;
+                }
+                if (candidates.size() > 1) {
+                    listener.onAmbiguous(candidates);
+                    return;
                 }
                 listener.onUnavailable("No paired WearTAK watch is reachable");
             }
@@ -507,6 +511,23 @@ public class WearTakBleClient {
                 if (completed.compareAndSet(false, true)) listener.onUnavailable(msg);
             }
         });
+    }
+
+    private List<DiscoveredDevice> bondedCandidates(List<DiscoveredDevice> devices) {
+        List<DiscoveredDevice> candidates = new ArrayList<>();
+        if (devices == null) return candidates;
+        for (DiscoveredDevice device : devices) {
+            if (device == null || device.address == null || !isBondedAddress(device.address)) continue;
+            boolean duplicate = false;
+            for (DiscoveredDevice candidate : candidates) {
+                if (device.address.equals(candidate.address)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) candidates.add(device);
+        }
+        return candidates;
     }
 
     /**
@@ -519,9 +540,10 @@ public class WearTakBleClient {
         if (bluetoothAdapter == null || !hasConnectPermission()) return null;
         String address = getPreferredAddress();
         if (address == null) return null;
+        if (bluetoothAdapter != null && !bluetoothAdapter.isEnabled()) return null;
         try {
             BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
-            if (!bluetoothAdapter.isEnabled() || device.getBondState() == BluetoothDevice.BOND_BONDED) {
+            if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
                 return new DiscoveredDevice(safeGetDeviceName(device), address, 0);
             }
             clearPreferredAddressIfMatches(address);
@@ -1142,6 +1164,12 @@ public class WearTakBleClient {
             String cs  = p.optString("cs", "");
 
             if (uid != null && !uid.isEmpty()) {
+                String previousUid = getPairedUid();
+                if (hasPairedIdentityMismatch(previousUid, uid)) {
+                    handleTrustLoss(currentGattAddress(), "watch_uid_mismatch",
+                            "Connected watch identity changed");
+                    return;
+                }
                 savePairedUid(uid, cs);
                 if (l != null) l.onPaired(uid, cs);
             }
@@ -1161,6 +1189,25 @@ public class WearTakBleClient {
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)
                 .apply();
+    }
+
+    private void clearPairedDeviceIdentity() {
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_PAIRED_UID)
+                .remove(KEY_PAIRED_CALLSIGN)
+                .apply();
+    }
+
+    static boolean hasPairedIdentityMismatch(String expectedUid, String observedUid) {
+        return expectedUid != null && !expectedUid.isEmpty()
+                && observedUid != null && !observedUid.isEmpty()
+                && !expectedUid.equals(observedUid);
+    }
+
+    private static boolean shouldClearPairedIdentity(String reason) {
+        return reason != null && (reason.startsWith("bond_")
+                || "watch_uid_mismatch".equals(reason));
     }
 
     // -------------------- helpers --------------------
