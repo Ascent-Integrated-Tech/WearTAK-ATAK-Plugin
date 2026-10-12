@@ -49,6 +49,7 @@ public class BleCotBridge {
 
     private MapView mapView;
     private String myUid;
+    private final java.util.Set<String> garminOriginMarkers = new java.util.LinkedHashSet<>();
     private String pluginCallsign;
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
@@ -396,6 +397,13 @@ public class BleCotBridge {
                 policy.watchImportStarted(markerUid, System.currentTimeMillis(),
                         p.optString("revision", ""), client.getReadySession());
             }
+            if (usePayloadLocation) {
+                synchronized (garminOriginMarkers) {
+                    garminOriginMarkers.add(markerUid);
+                    while (garminOriginMarkers.size() > 256)
+                        garminOriginMarkers.remove(garminOriginMarkers.iterator().next());
+                }
+            }
             dispatchCot("MARKER", xml);
 
         } catch (Exception e) {
@@ -448,6 +456,12 @@ public class BleCotBridge {
         if (uid == null) return false;
         synchronized (watchEmergencyUids) {
             return watchEmergencyUids.contains(uid);
+        }
+    }
+
+    boolean isGarminOriginMarker(String uid) {
+        synchronized (garminOriginMarkers) {
+            return uid != null && (garminOriginMarkers.contains(uid) || uid.startsWith("garmin-marker-"));
         }
     }
 

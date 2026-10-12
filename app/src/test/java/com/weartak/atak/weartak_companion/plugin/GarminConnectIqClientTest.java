@@ -33,6 +33,78 @@ public class GarminConnectIqClientTest {
         assertTrue(client.isConnected());
     }
 
+    @Test public void entityLinksTargetOneWatchAndRetireOnDisconnect() {
+        sdk.known = Arrays.asList(watch, new IQDevice(2, "Other"));
+        client.start();
+        sdk.lifecycle.onSdkReady();
+        GarminEntityForwarder.Link link = client.entityLinks().get(0);
+        assertTrue(link.send("entity", Collections.singletonMap("uid", "point")));
+        assertEquals(1, sdk.sent.size());
+        long target = sdk.sent.get(0);
+        IQDevice device = target == 1 ? watch : sdk.known.get(1);
+        ConnectIQ.IQApplicationEventListener old = sdk.appListeners.get(target);
+        sdk.deviceListeners.get(target).onDeviceStatusChanged(device, IQDevice.IQDeviceStatus.NOT_CONNECTED);
+        assertFalse(link.isCurrent());
+        assertFalse(link.send("entity", Collections.singletonMap("uid", "late")));
+        old.onMessageReceived(device, sdk.app,
+                Collections.singletonList(Collections.singletonMap("msgType", "entity_sync_request")),
+                ConnectIQ.IQMessageStatus.SUCCESS);
+        assertEquals(0, listener.messages);
+        sdk.deviceListeners.get(target).onDeviceStatusChanged(device, IQDevice.IQDeviceStatus.CONNECTED);
+        assertFalse(link.isCurrent());
+        assertEquals(1, sdk.appUnregistrations);
+        assertEquals(3, sdk.appRegistrationAttempts);
+        old.onMessageReceived(device, sdk.app,
+                Collections.singletonList(Collections.singletonMap("msgType", "entity_sync_request")),
+                ConnectIQ.IQMessageStatus.SUCCESS);
+        assertEquals(0, listener.messages);
+    }
+
+    @Test public void oldEntityLinkCannotSendToReplacementWithSameIdentifier() {
+        connect();
+        GarminEntityForwarder.Link old = client.entityLinks().get(0);
+        sdk.known = Collections.emptyList();
+        client.refreshDevices();
+        connect();
+        assertFalse(old.isCurrent());
+        assertFalse(old.send("entity", Collections.singletonMap("uid", "stale")));
+        assertTrue(client.entityLinks().get(0).send("entity", Collections.singletonMap("uid", "fresh")));
+        client.stop();
+        assertFalse(client.entityLinks().size() > 0);
+        assertFalse(old.isCurrent());
+    }
+
+    @Test public void sdkScopedForwarderPreservesDictionaryAndRetiresQueuedWork() {
+        connect();
+        GarminEntityForwarderTest.FakeSource source = new GarminEntityForwarderTest.FakeSource();
+        List<Runnable> queue = new ArrayList<>();
+        GarminEntityForwarder forwarder = new GarminEntityForwarder(source, client::entityLinks,
+                queue::add, () -> true);
+        forwarder.start();
+        Map<String, Object> cancel = GarminEntityForwarderTest.entity("alert",
+                "2026-10-12T12:00:00Z", "b-a-o-tbl-can");
+        cancel.remove("lat");
+        cancel.remove("lon");
+        source.emit(cancel);
+        queue.forEach(Runnable::run);
+        Map<?, ?> envelope = sdk.envelopes.get(1);
+        assertEquals("entity", envelope.get("msgType"));
+        Map<?, ?> payload = (Map<?, ?>) envelope.get("payload");
+        assertEquals("CANCEL", payload.get("state"));
+        assertTrue(payload.get("emergency") instanceof Map);
+        assertFalse(payload.containsKey("lat"));
+        queue.clear();
+        source.emit(GarminEntityForwarderTest.entity("late", "2026-10-12T12:01:00Z", "a-f-G"));
+        client.stop();
+        connect();
+        forwarder.refreshLinks();
+        int count = sdk.sent.size();
+        queue.forEach(Runnable::run);
+        assertEquals(count, sdk.sent.size());
+        forwarder.close();
+        assertEquals(1, source.unsubscriptions);
+    }
+
     @Test
     public void staleLifecycleCallbacksDoNotBreakReenabledSession() {
         connect();
@@ -214,6 +286,8 @@ public class GarminConnectIqClientTest {
         boolean failAppRegistration;
         int appInfoRequests;
         int appRegistrationAttempts;
+        int appUnregistrations;
+        final List<Map<?, ?>> envelopes = new ArrayList<>();
         boolean invalidState;
         boolean unavailable;
         long failDevice = -1;
@@ -256,6 +330,10 @@ public class GarminConnectIqClientTest {
             if (failAppRegistration) throw new ServiceUnavailableException("test");
             appListeners.put(device.getDeviceIdentifier(), callback);
         }
+        @Override public void unregisterForApplicationEvents(IQDevice device, IQApp app) {
+            appUnregistrations++;
+            appListeners.remove(device.getDeviceIdentifier());
+        }
         @Override public void sendMessage(IQDevice device, IQApp app, Object message,
                                           IQSendMessageListener callback)
                 throws InvalidStateException, ServiceUnavailableException {
@@ -265,6 +343,7 @@ public class GarminConnectIqClientTest {
                 throw new ServiceUnavailableException("test");
             }
             sent.add(device.getDeviceIdentifier());
+            envelopes.add((Map<?, ?>) message);
             sendListener = callback;
         }
         @Override protected void sendMessageProtocol(IQDevice d, IQApp a, byte[] b,
