@@ -191,6 +191,9 @@ public class WearTakBleClient {
     private void handleTrustLoss(String address, String reason, String msg) {
         pendingBondDevice = null;
         clearPreferredAddressIfMatches(address);
+        if (shouldClearPairedIdentity(reason)) {
+            clearPairedDeviceIdentity();
+        }
 
         JsonListener l = jsonListener.get();
         if (l != null) l.onTrustLost(address, reason);
@@ -479,7 +482,8 @@ public class WearTakBleClient {
                 return;
             }
         } else {
-            logI("Reusing existing system bond for " + device.address);
+            logI("Reusing existing system bond for " + safeGetDeviceLabel(remote)
+                    + " (" + device.address + ")");
         }
 
         long now = android.os.SystemClock.uptimeMillis();
@@ -937,6 +941,12 @@ public class WearTakBleClient {
             String cs  = p.optString("cs", "");
 
             if (uid != null && !uid.isEmpty()) {
+                String previousUid = getPairedUid();
+                if (hasPairedIdentityMismatch(previousUid, uid)) {
+                    handleTrustLoss(currentGattAddress(), "watch_uid_mismatch",
+                            "Connected watch identity changed");
+                    return;
+                }
                 savePairedUid(uid, cs);
                 if (l != null) l.onPaired(uid, cs);
             }
@@ -956,6 +966,25 @@ public class WearTakBleClient {
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)
                 .apply();
+    }
+
+    private void clearPairedDeviceIdentity() {
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_PAIRED_UID)
+                .remove(KEY_PAIRED_CALLSIGN)
+                .apply();
+    }
+
+    static boolean hasPairedIdentityMismatch(String expectedUid, String observedUid) {
+        return expectedUid != null && !expectedUid.isEmpty()
+                && observedUid != null && !observedUid.isEmpty()
+                && !expectedUid.equals(observedUid);
+    }
+
+    private static boolean shouldClearPairedIdentity(String reason) {
+        return reason != null && (reason.startsWith("bond_")
+                || "watch_uid_mismatch".equals(reason));
     }
 
     // -------------------- helpers --------------------
@@ -1024,6 +1053,22 @@ public class WearTakBleClient {
             return d.getName();
         } catch (Throwable ignored) {}
         return null;
+    }
+
+    private String safeGetDeviceAlias(BluetoothDevice d) {
+        try {
+            if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) return null;
+            return d.getAlias();
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private String safeGetDeviceLabel(BluetoothDevice d) {
+        String alias = safeGetDeviceAlias(d);
+        if (alias != null && !alias.trim().isEmpty()) return alias.trim();
+        String name = safeGetDeviceName(d);
+        return name == null || name.trim().isEmpty() ? null : name.trim();
     }
 
     private String normalizeWearTakName(String value) {
