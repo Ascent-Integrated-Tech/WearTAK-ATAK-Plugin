@@ -4,10 +4,12 @@ final class ChatReplyRouter {
     interface Targets<T> {
         T find(String uid);
         boolean isGroup(T target);
+        boolean isPrivateContact(T target);
         boolean isWritable(T group);
         java.util.List<String> recipients(T group);
         void sendGroup(String text, T group, String[] recipients);
         void sendBroadcast(String text);
+        void sendDirect(String text, T target);
     }
 
     private ChatReplyRouter() {}
@@ -35,6 +37,10 @@ final class ChatReplyRouter {
             targets.sendGroup(text, target, recipients.toArray(new String[0]));
             return true;
         }
-        return false;
+        if (target == null || !targets.isPrivateContact(target)) {
+            throw new IllegalArgumentException("ATAK direct chat contact is unavailable or not private: " + uid);
+        }
+        targets.sendDirect(text, target);
+        return true;
     }
 }

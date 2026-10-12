@@ -11,9 +11,12 @@ public class GroupChatRelayTest {
     private static final class Targets implements ChatReplyRouter.Targets<String> {
         final List<String> sends = new ArrayList<>();
         boolean writable = true;
+        boolean privateContact = true;
         List<String> members = Arrays.asList("alice", "bob");
         public String find(String uid) { return "team".equals(uid) || "alice".equals(uid) ? uid : null; }
         public boolean isGroup(String target) { return "team".equals(target); }
+        public boolean isPrivateContact(String target) { return privateContact && "alice".equals(target); }
+        public void sendDirect(String text, String target) { sends.add("direct:" + target + ":" + text); }
         public boolean isWritable(String group) { return writable; }
         public List<String> recipients(String group) { return members; }
         public void sendGroup(String text, String group, String[] recipients) {
@@ -48,10 +51,21 @@ public class GroupChatRelayTest {
             assertEquals("alice", payload.getString("conversationUid"));
             assertEquals("Alice", payload.getString("conversationTitle"));
             assertFalse(payload.getBoolean("isGroup"));
-            assertFalse(ChatReplyRouter.route("alice", false, "Direct", targets));
+            assertTrue(ChatReplyRouter.route("alice", false, "Direct", targets));
         }
         assertTrue(ChatReplyRouter.route("team", false, "Legacy group reply", targets));
-        assertEquals(Arrays.asList("team:Legacy group reply"), targets.sends);
+        assertEquals(Arrays.asList("direct:alice:Direct", "direct:alice:Direct",
+                "direct:alice:Direct", "direct:alice:Direct", "team:Legacy group reply"), targets.sends);
+    }
+
+    @Test public void unknownSelfAndBroadcastLikePrivateContactsNeverSend() {
+        Targets targets = new Targets();
+        for (String uid : new String[]{"missing", "phone", "", " ", "all chat rooms"}) {
+            assertThrows(IllegalArgumentException.class, () -> ChatReplyRouter.route(uid, false, "Private", targets));
+        }
+        targets.privateContact = false;
+        assertThrows(IllegalArgumentException.class, () -> ChatReplyRouter.route("alice", false, "Private", targets));
+        assertTrue(targets.sends.isEmpty());
     }
 
     @Test public void missingUnknownAndIndividualGroupTargetsNeverSend() {
@@ -70,6 +84,23 @@ public class GroupChatRelayTest {
                 "Hi", 100, "All Chat Rooms", "All Chat Rooms").getJSONObject("payload");
         assertTrue(ChatReplyRouter.route(payload.getString("conversationUid"), payload.getBoolean("isGroup"), "All", targets));
         assertEquals(Arrays.asList("All Chat Rooms:All"), targets.sends);
+    }
+
+    @Test public void canonicalReplyEnvelopesDispatchValidatedGroupPrivateAndBroadcastTargets() throws Exception {
+        Targets targets = new Targets();
+        for (String json : Arrays.asList(
+                "{\"roomUid\":\"team\",\"roomTitle\":\"Team\",\"isGroup\":true,\"msg\":\"Group\"}",
+                "{\"roomUid\":\"alice\",\"recipientUid\":\"alice\",\"replyTo\":\"alice\",\"text\":\"Private\"}",
+                "{\"roomUid\":\"All Chat Rooms\",\"isGroup\":true,\"msg\":\"All\"}")) {
+            ChatReplyPayload reply = new ChatReplyPayload(new JSONObject(json));
+            ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text, targets);
+        }
+        assertEquals(Arrays.asList("team:Group", "direct:alice:Private", "All Chat Rooms:All"), targets.sends);
+        ChatReplyPayload unknown = new ChatReplyPayload(new JSONObject(
+                "{\"roomUid\":\"missing\",\"isGroup\":true,\"msg\":\"No leak\"}"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatReplyRouter.route(unknown.roomUid, unknown.isGroup, unknown.text, targets));
+        assertEquals(3, targets.sends.size());
     }
 
     @Test public void emptyOrUnwritableGroupsNeverInvokeSendOrBroadcast() {
