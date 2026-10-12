@@ -758,6 +758,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             public void onConnectionChanged(boolean connected) {
                                 mainHandler.post(() -> {
                                     if (!connectionModes.isCurrent(token)) return;
+                                    if (!connected && bloodhoundBridge != null) {
+                                        bloodhoundBridge.disconnected();
+                                    }
                                     renderGarminConnection(connected);
                                     if (garminEntities != null) garminEntities.refreshLinks();
                                     refreshGarminSettingsLink();
@@ -782,6 +785,25 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             renderGarminConnecting();
             bleCotBridge.startChatForwarding(garminClient);
             GarminConnectIqClient owner = garminClient;
+            bloodhoundBridge = new BloodhoundBridge(MapView.getMapView(),
+                    new BloodhoundBridge.Transport() {
+                        @Override public boolean connected() {
+                            return currentGarminBloodhoundLink(token, owner) != null;
+                        }
+
+                        @Override public boolean send(JSONObject envelope) {
+                            GarminEntityForwarder.Link link =
+                                    currentGarminBloodhoundLink(token, owner);
+                            if (link == null) return false;
+                            try {
+                                return link.send(GarminBloodhoundProtocol.outboundType(envelope),
+                                        GarminBloodhoundProtocol.outboundPayload(envelope));
+                            } catch (IllegalArgumentException e) {
+                                Log.w(TAG, "Garmin Bloodhound message rejected", e);
+                                return false;
+                            }
+                        }
+                    }, true);
             garminEntitySource = new GarminMapEntitySource(MapView.getMapView(), bleCotBridge);
             garminEntities = new GarminEntityForwarder(garminEntitySource, owner::entityLinks,
                     runnable -> mainHandler.post(runnable),
@@ -789,6 +811,36 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             garminEntities.start();
             startPhoneAlertForwarding(token);
             garminClient.start();
+    }
+
+    private GarminEntityForwarder.Link currentGarminBloodhoundLink(
+            long token, GarminConnectIqClient owner) {
+        if (!connectionModes.isCurrent(token)
+                || connectionModes.getMode() != ConnectionModeController.Mode.GARMIN
+                || !garminEnabled || garminClient != owner) return null;
+        List<GarminEntityForwarder.Link> links = owner.entityLinks();
+        return links.size() == 1 && links.get(0).isCurrent() ? links.get(0) : null;
+    }
+
+    private boolean isCurrentGarminBloodhoundLink(
+            long token, GarminConnectIqClient owner, GarminEntityForwarder.Link link) {
+        return link != null && link.isCurrent()
+                && currentGarminBloodhoundLink(token, owner) == link;
+    }
+
+    private boolean isCurrentGarminBloodhoundLink(GarminEntityForwarder.Link link) {
+        GarminConnectIqClient owner = garminClient;
+        return link != null && link.isCurrent()
+                && connectionModes.getMode() == ConnectionModeController.Mode.GARMIN
+                && garminEnabled && owner != null
+                && currentGarminBloodhoundLink(owner) == link;
+    }
+
+    private GarminEntityForwarder.Link currentGarminBloodhoundLink(GarminConnectIqClient owner) {
+        if (connectionModes.getMode() != ConnectionModeController.Mode.GARMIN
+                || !garminEnabled || garminClient != owner) return null;
+        List<GarminEntityForwarder.Link> links = owner.entityLinks();
+        return links.size() == 1 && links.get(0).isCurrent() ? links.get(0) : null;
     }
 
     private void renderGarminConnection(boolean connected) {
@@ -816,6 +868,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         GarminEntityForwarder.Link next = links.size() == 1 && links.get(0).isCurrent()
                 ? links.get(0) : null;
         if (garminSettingsLink != next) {
+            if (bloodhoundBridge != null
+                    && connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
+                bloodhoundBridge.disconnected();
+            }
             garminSettingsTransaction.cancel();
             garminSettingsDraftAtSend = null;
             garminSettingsLink = next;
@@ -975,6 +1031,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (!garminEnabled) return;
         String msgType = envelope.optString("msgType", "");
         Log.i(TAG, "Garmin Connect IQ message: " + msgType);
+        if ("bloodhound_control".equals(msgType)
+                || "bloodhound_control_result".equals(msgType)) {
+            if (!isCurrentGarminBloodhoundLink(link)) {
+                Log.w(TAG, "Ignoring Garmin Bloodhound message from a non-exclusive watch link");
+                return;
+            }
+            BloodhoundBridge bridge = bloodhoundBridge;
+            if (bridge != null) bridge.handleGarminMessage(envelope);
+            return;
+        }
         if ("settings_set_ack".equals(msgType) || "watch_settings".equals(msgType)) {
             handleGarminSettingsMessage(msgType, envelope.optJSONObject("payload"), link);
             return;
@@ -1000,7 +1066,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             JSONObject hello = envelope.optJSONObject("payload");
             if (hello != null) {
                 try {
-                    garminClient.sendMessage("relay_status", GarminChatPolicy.relayStatus(hello));
+                    Map<String, Object> status = GarminChatPolicy.relayStatus(
+                            hello, isCurrentGarminBloodhoundLink(link));
+                    boolean bloodhoundSupported =
+                            Boolean.TRUE.equals(status.get("bloodhoundControl"));
+                    if (bloodhoundBridge != null) {
+                        if (bloodhoundSupported)
+                            bloodhoundBridge.setRelaySession(hello.optString("relaySession"));
+                        else
+                            bloodhoundBridge.disconnected();
+                    }
+                    if (link != null && link.isCurrent()) link.send("relay_status", status);
                 } catch (IllegalArgumentException e) {
                     Log.w(TAG, "Garmin capabilities not negotiated: " + e.getMessage());
                 }

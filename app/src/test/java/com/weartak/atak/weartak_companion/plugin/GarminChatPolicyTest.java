@@ -10,17 +10,36 @@ import static org.junit.Assert.*;
 public class GarminChatPolicyTest {
     @Test public void capabilitiesAreSessionBoundAndDoNotClaimDeliveryOrGroups() throws Exception {
         Map<String, Object> status = GarminChatPolicy.relayStatus(new JSONObject()
-                .put("relaySession", "current-watch-session"));
+                .put("relaySession", "current-watch-session").put("bloodhoundVersion", 1));
         assertEquals("current-watch-session", status.get("relaySession"));
         assertEquals(false, status.get("chatGroups"));
         assertEquals(false, status.get("reliableDelivery"));
-        assertEquals(3, status.size());
+        assertEquals(5, status.size());
+        assertEquals(1, status.get("bloodhoundVersion"));
+        assertEquals(true, status.get("bloodhoundControl"));
+    }
+
+    @Test public void bloodhoundCapabilityRequiresVersionOneRequest() throws Exception {
+        for (Object version : new Object[]{"1", 2, 1.5d, true}) {
+            Map<String, Object> status = GarminChatPolicy.relayStatus(
+                    new JSONObject().put("relaySession", "watch").put("bloodhoundVersion", version));
+            assertFalse(status.containsKey("bloodhoundVersion"));
+            assertFalse(status.containsKey("bloodhoundControl"));
+            assertEquals(false, status.get("chatGroups"));
+            assertEquals(false, status.get("reliableDelivery"));
+        }
+        Map<String, Object> ambiguous = GarminChatPolicy.relayStatus(
+                new JSONObject().put("relaySession", "watch").put("bloodhoundVersion", 1), false);
+        assertFalse(ambiguous.containsKey("bloodhoundVersion"));
+        assertFalse(ambiguous.containsKey("bloodhoundControl"));
     }
 
     @Test public void capabilitiesWithoutARealSessionAreRejected() throws Exception {
         for (JSONObject hello : new JSONObject[]{new JSONObject(),
                 new JSONObject().put("relaySession", 1),
-                new JSONObject().put("relaySession", "")}) {
+                new JSONObject().put("relaySession", ""),
+                new JSONObject().put("relaySession", "bad\nsession"),
+                new JSONObject().put("relaySession", new String(new char[129]).replace('\0', 'x'))}) {
             try {
                 GarminChatPolicy.relayStatus(hello);
                 fail("Invalid relay session was accepted");

@@ -55,16 +55,29 @@ final class BloodhoundSync {
         String action = p.optString("action", "");
         String uid = p.optString("target_uid", "");
         if ("update".equals(action)) {
+            if (!validUuid(id) || !validUid(uid) || !validTargetPayload(p)) {
+                result(p, false, "Invalid Bloodhound target update");
+                return;
+            }
             if (pending == null && id.equals(sessionId) && uid.equals(targetUid)) {
                 try {
-                    if (port.isTracking(uid)) port.update(p);
+                    if (!port.isTracking(uid)) {
+                        result(p, false, "Bloodhound target is no longer tracked");
+                        return;
+                    }
+                    port.update(p);
                 } catch (Exception e) {
                     port.failure("Bloodhound target update failed: " + e.getMessage());
+                    result(p, false, "Bloodhound target update failed");
+                    return;
                 }
+                result(p, true, null);
+            } else {
+                result(p, false, "Stale or unrelated Bloodhound session");
             }
             return;
         }
-        if (!validUuid(id) || uid.trim().isEmpty()
+        if (!validUuid(id) || !validUid(uid)
                 || (!"start".equals(action) && !"stop".equals(action))) {
             result(p, false, "Invalid Bloodhound command");
             return;
@@ -72,7 +85,9 @@ final class BloodhoundSync {
         if (pending != null) {
             if (!id.equals(pending.optString("session_id"))
                     || !action.equals(pending.optString("action"))
-                    || !uid.equals(pending.optString("target_uid"))) {
+                    || !uid.equals(pending.optString("target_uid"))
+                    || pending.has("command_id") != p.has("command_id")
+                    || !sameIdentity(pending, p)) {
                 result(p, false, "Bloodhound command in progress");
             }
             return;
@@ -96,6 +111,10 @@ final class BloodhoundSync {
         } else {
             if (retired.contains(id)) {
                 result(p, false, "Bloodhound session already ended");
+                return;
+            }
+            if (!validTargetPayload(p)) {
+                result(p, false, "Invalid Bloodhound target");
                 return;
             }
             if (id.equals(sessionId) && !uid.equals(targetUid)) {
@@ -232,10 +251,12 @@ final class BloodhoundSync {
     private void result(JSONObject request, boolean ok, String error) {
         try {
             JSONObject p = new JSONObject();
-            p.put("session_id", request.optString("session_id"));
-            p.put("action", request.optString("action"));
+            for (String key : new String[]{"relaySession", "bloodhoundVersion", "command_id",
+                    "session_id", "target_uid", "action"}) {
+                if (request.has(key)) p.put(key, request.opt(key));
+            }
             p.put("ok", ok);
-            if (error != null) p.put("error", error);
+            if (error != null) p.put("error", safeError(error));
             if (port.connected() && !port.send(envelope("bloodhound_control_result", p))) {
                 port.failure("Unable to send Bloodhound result");
             }
@@ -268,8 +289,10 @@ final class BloodhoundSync {
     private void receivedResult(JSONObject p) {
         Object ok = p.opt("ok");
         if (!(ok instanceof Boolean)) return;
-        JSONObject sent = outgoing.remove(key(p.optString("session_id"), p.optString("action")));
-        if (sent == null) return;
+        String requestKey = key(p.optString("session_id"), p.optString("action"));
+        JSONObject sent = outgoing.get(requestKey);
+        if (sent == null || !sameIdentity(sent, p)) return;
+        outgoing.remove(requestKey);
         if (!((Boolean) ok)) {
             failedResult(sent, "Watch Bloodhound: " + p.optString("error", "command failed"));
         }
@@ -321,5 +344,59 @@ final class BloodhoundSync {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    private static boolean validUid(String uid) {
+        if (uid == null || uid.isEmpty() || uid.length() > 256 || !uid.equals(uid.trim())) return false;
+        for (int i = 0; i < uid.length(); i++) {
+            if (Character.isISOControl(uid.charAt(i))) return false;
+        }
+        return true;
+    }
+
+    private static String safeError(String error) {
+        StringBuilder safe = new StringBuilder(Math.min(error.length(), 256));
+        for (int i = 0; i < error.length() && safe.length() < 256; i++) {
+            char value = error.charAt(i);
+            if (!Character.isISOControl(value)) safe.append(value);
+        }
+        String result = safe.toString().trim();
+        return result.isEmpty() ? "Bloodhound command failed" : result;
+    }
+
+    private static boolean validTargetPayload(JSONObject payload) {
+        Object latitude = payload.opt("lat");
+        Object longitude = payload.opt("lon");
+        if (!(latitude instanceof Number) || !(longitude instanceof Number)) return false;
+        double lat = ((Number) latitude).doubleValue();
+        double lon = ((Number) longitude).doubleValue();
+        if (Double.isNaN(lat) || Double.isInfinite(lat)
+                || Double.isNaN(lon) || Double.isInfinite(lon)
+                || lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+        Object hae = payload.opt("hae");
+        if (hae != null && hae != JSONObject.NULL
+                && (!(hae instanceof Number) || Double.isNaN(((Number) hae).doubleValue())
+                    || Double.isInfinite(((Number) hae).doubleValue()))) return false;
+        Object callsign = payload.opt("target_callsign");
+        if (callsign != null && callsign != JSONObject.NULL) {
+            if (!(callsign instanceof String) || ((String) callsign).length() > 256) return false;
+            String text = (String) callsign;
+            for (int i = 0; i < text.length(); i++) {
+                if (Character.isISOControl(text.charAt(i))) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameIdentity(JSONObject sent, JSONObject received) {
+        String[] fields = sent.has("command_id")
+                ? new String[]{"session_id", "action", "target_uid", "relaySession",
+                    "bloodhoundVersion", "command_id"}
+                : new String[]{"session_id", "action"};
+        for (String field : fields) {
+            if (sent.has(field) && (!received.has(field)
+                    || !sent.opt(field).equals(received.opt(field)))) return false;
+        }
+        return true;
     }
 }

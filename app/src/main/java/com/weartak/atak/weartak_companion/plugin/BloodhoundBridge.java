@@ -13,7 +13,6 @@ import com.atakmap.android.maps.MapEvent;
 import com.atakmap.android.maps.MapEventDispatcher;
 import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.MapView;
-import com.atakmap.android.maps.Marker;
 import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 
@@ -28,23 +27,42 @@ import java.lang.reflect.Field;
 final class BloodhoundBridge implements BloodhoundSync.Port {
     private static final String TAG = "WTK/Bloodhound";
     private static final String HOUNDING = "hounding";
+    interface Transport {
+        boolean connected();
+        boolean send(JSONObject envelope);
+    }
+
     private final MapView mapView;
-    private final WearTakBleClient ble;
+    private final Transport transport;
+    private final boolean garminTransport;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final BloodhoundSync sync = new BloodhoundSync(this);
     private final Map<MapItem, Boolean> observed = new HashMap<>();
-    private final java.util.Set<MapItem> fallbackTargets = new java.util.HashSet<>();
-    private volatile boolean applyingUpdate;
     private volatile boolean closed;
     private volatile long connectionGeneration;
+    private volatile String relaySession;
     private final MapItem.OnMetadataChangedListener metadata = this::metadataChanged;
     private final MapItem.OnMetadataChangedListener callsign = (item, key) -> sourceChanged(item);
     private final PointMapItem.OnPointChangedListener pointChanged = this::sourceChanged;
     private final MapEventDispatcher.MapEventDispatchListener events = this::mapEvent;
 
     BloodhoundBridge(MapView mapView, WearTakBleClient ble) {
+        this(mapView, new Transport() {
+            @Override public boolean connected() { return ble.isBondedConnected(); }
+            @Override public boolean send(JSONObject envelope) {
+                return ble.writeJsonLineToWatch(envelope.toString());
+            }
+        });
+    }
+
+    BloodhoundBridge(MapView mapView, Transport transport) {
+        this(mapView, transport, false);
+    }
+
+    BloodhoundBridge(MapView mapView, Transport transport, boolean garminTransport) {
         this.mapView = mapView;
-        this.ble = ble;
+        this.transport = transport;
+        this.garminTransport = garminTransport;
         MapEventDispatcher dispatcher = mapView.getMapEventDispatcher();
         dispatcher.addMapEventListenerToBase(MapEvent.ITEM_ADDED, events);
         dispatcher.addMapEventListenerToBase(MapEvent.ITEM_REMOVED, events);
@@ -62,21 +80,7 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
                 failure("Malformed Bloodhound control envelope: missing object payload");
                 return true;
             }
-            if (closed || !connected()) return true;
-            long generation = connectionGeneration;
-            main.post(() -> {
-                if (closed || generation != connectionGeneration || !connected()) return;
-                sync.receive(env);
-                JSONObject p = env.optJSONObject("payload");
-                if ("bloodhound_control".equals(type) && p != null) {
-                    String id = p.optString("session_id");
-                    String action = p.optString("action");
-                    main.postDelayed(() -> {
-                        if (!closed && generation == connectionGeneration)
-                            sync.timeout(id, action);
-                    }, 3000);
-                }
-            });
+            receive(env, type);
             return true;
         } catch (JSONException e) {
             Log.w(TAG, "Malformed BLE JSON envelope", e);
@@ -85,9 +89,52 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
         }
     }
 
+    boolean handleGarminMessage(JSONObject envelope) {
+        String type = envelope == null ? "" : envelope.optString("msgType", "");
+        if (!"bloodhound_control".equals(type)
+                && !"bloodhound_control_result".equals(type)) return false;
+        try {
+            receive(GarminBloodhoundProtocol.inbound(envelope, relaySession), type);
+        } catch (Exception e) {
+            failure("Invalid Garmin Bloodhound message: " + e.getMessage());
+        }
+        return true;
+    }
+
+    void setRelaySession(String session) {
+        if (!garminTransport || session == null || session.trim().isEmpty()
+                || session.length() > 128 || !session.equals(session.trim())) return;
+        for (int i = 0; i < session.length(); i++) {
+            if (Character.isISOControl(session.charAt(i))) return;
+        }
+        if (!session.equals(relaySession)) {
+            disconnected();
+            relaySession = session;
+        }
+    }
+
+    private void receive(JSONObject env, String type) {
+        JSONObject payload = env.optJSONObject("payload");
+        if (payload == null || closed || !connected()) return;
+        final long generation = connectionGeneration;
+        main.post(() -> {
+            if (closed || generation != connectionGeneration || !connected()) return;
+            sync.receive(env);
+            if ("bloodhound_control".equals(type)) {
+                String id = payload.optString("session_id");
+                String action = payload.optString("action");
+                main.postDelayed(() -> {
+                    if (!closed && generation == connectionGeneration && connected())
+                        sync.timeout(id, action);
+                }, 3000);
+            }
+        });
+    }
+
     void disconnected() {
         connectionGeneration++;
         main.post(sync::disconnected);
+        if (garminTransport) relaySession = null;
     }
 
     void close() {
@@ -106,7 +153,6 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
                 ((PointMapItem) item).removeOnPointChangedListener(pointChanged);
             }
             observed.clear();
-            fallbackTargets.clear();
         }
     }
 
@@ -125,10 +171,6 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
         MapItem item = event.getItem();
         if (closed || item == null) return;
         if (MapEvent.ITEM_IMPORTED.equals(event.getType())) {
-            synchronized (observed) {
-                // Direct CoT ingress takes ownership from the companion snapshot.
-                fallbackTargets.remove(item);
-            }
             return;
         }
         if (MapEvent.ITEM_ADDED.equals(event.getType())) {
@@ -141,7 +183,6 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
             Boolean wasTracking;
             synchronized (observed) {
                 wasTracking = observed.remove(item);
-                fallbackTargets.remove(item);
             }
             if (Boolean.TRUE.equals(wasTracking)) trackingChanged(item, false);
         }
@@ -198,7 +239,7 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
     }
 
     private void publishUpdate(MapItem item) {
-        if (closed || applyingUpdate || !connected()
+        if (closed || !connected()
                 || !item.getMetaBoolean(HOUNDING, false)) return;
         long generation = connectionGeneration;
         try {
@@ -214,48 +255,45 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
     }
 
     private void sourceChanged(MapItem item) {
-        if (applyingUpdate) return;
-        synchronized (observed) {
-            // CoT import changes the point before ITEM_IMPORTED is dispatched.
-            // Local/manual source edits also take authority over the fallback.
-            fallbackTargets.remove(item);
-        }
         publishUpdate(item);
     }
 
     @Override public void update(JSONObject target) throws Exception {
-        MapItem item = mapView.getRootGroup().deepFindUID(target.getString("target_uid"));
-        synchronized (observed) {
-            if (!fallbackTargets.contains(item)) return;
-        }
-        GeoPoint current = ((PointMapItem) item).getPoint();
-        boolean start = "start".equals(target.optString("action"));
-        double lat = start && !target.has("lat") ? current.getLatitude() : target.getDouble("lat");
-        double lon = start && !target.has("lon") ? current.getLongitude() : target.getDouble("lon");
-        double hae = target.optDouble("hae", start ? current.getAltitude() : GeoPoint.UNKNOWN);
-        if (Double.isNaN(lat) || Double.isInfinite(lat) || Math.abs(lat) > 90
-                || Double.isNaN(lon) || Double.isInfinite(lon) || Math.abs(lon) > 180
-                || (target.has("hae") && (Double.isNaN(hae) || Double.isInfinite(hae))))
-            throw new IllegalArgumentException("Invalid target coordinates");
-        applyingUpdate = true;
-        try {
-            ((PointMapItem) item).setPoint(new GeoPoint(lat, lon, hae));
-            if (target.has("target_callsign")) {
-                String name = target.getString("target_callsign");
-                item.setTitle(name);
-                item.setMetaString("callsign", name);
-            }
-        } finally {
-            applyingUpdate = false;
-        }
+        String uid = target.getString("target_uid");
+        MapItem item = mapView.getRootGroup().deepFindUID(uid);
+        if (!(item instanceof PointMapItem))
+            throw new IllegalArgumentException("Bloodhound target is not an existing point");
+        GeoPoint point = ((PointMapItem) item).getPoint();
+        if (point == null || !point.isValid()
+                || Math.abs(point.getLatitude() - target.getDouble("lat")) > 0.000001d
+                || Math.abs(point.getLongitude() - target.getDouble("lon")) > 0.000001d)
+            throw new IllegalStateException("ATAK map owns Bloodhound target coordinates");
     }
 
     @Override public boolean connected() {
-        return !closed && ble.isBondedConnected();
+        return !closed && transport.connected() && (!garminTransport || relaySession != null);
     }
 
     @Override public boolean send(JSONObject envelope) {
-        return connected() && ble.writeJsonLineToWatch(envelope.toString());
+        if (!connected()) return false;
+        try {
+            if (garminTransport && "bloodhound_control".equals(
+                    envelope.optString("msg_type"))) {
+                JSONObject payload = envelope.optJSONObject("payload");
+                if (payload == null || relaySession == null) return false;
+                payload.put("relaySession", relaySession);
+                payload.put("bloodhoundVersion", 1);
+                if (!payload.has("command_id"))
+                    payload.put("command_id", java.util.UUID.randomUUID().toString());
+            }
+            return transport.send(envelope);
+        } catch (JSONException e) {
+            failure("Could not prepare Bloodhound message: " + e.getMessage());
+            return false;
+        } catch (IllegalArgumentException e) {
+            failure("Invalid Bloodhound transport message: " + e.getMessage());
+            return false;
+        }
     }
 
     @Override public void awaitResult(String id, String action) {
@@ -278,7 +316,7 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
     }
 
     @Override public void start(JSONObject target) throws Exception {
-        if (!connected()) throw new IllegalStateException("Bonded BLE connection required");
+        if (!connected()) throw new IllegalStateException("Active watch connection required");
         BloodHoundTool tool = nativeTool();
         String uid = target.getString("target_uid");
         if (mapView.getSelfMarker() == null
@@ -288,30 +326,14 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
         }
         MapItem item = mapView.getRootGroup().deepFindUID(uid);
         if (item == null) {
-            double lat = target.getDouble("lat");
-            double lon = target.getDouble("lon");
-            double hae = target.optDouble("hae", GeoPoint.UNKNOWN);
-            if (Double.isNaN(lat) || Double.isInfinite(lat) || Math.abs(lat) > 90
-                    || Double.isNaN(lon) || Double.isInfinite(lon) || Math.abs(lon) > 180
-                    || (target.has("hae") && (Double.isNaN(hae) || Double.isInfinite(hae)))) {
-                throw new IllegalArgumentException("Invalid target coordinates");
-            }
-            Marker marker = new Marker(new GeoPoint(lat, lon, hae), uid);
-            marker.setType("a-u-G");
-            String callsign = target.optString("target_callsign", uid);
-            marker.setTitle(callsign);
-            marker.setMetaString("callsign", callsign);
-            mapView.getRootGroup().addItem(marker);
-            observe(marker);
-            synchronized (observed) {
-                fallbackTargets.add(marker);
-            }
-            item = marker;
+            throw new IllegalArgumentException("Bloodhound target is not present in the ATAK map");
         }
         if (!(item instanceof PointMapItem)) {
             throw new IllegalArgumentException("Target is not a point map item");
         }
-        update(target);
+        GeoPoint point = ((PointMapItem) item).getPoint();
+        if (point == null || !point.isValid())
+            throw new IllegalArgumentException("Bloodhound target has no valid ATAK location");
         // Invoke the installed receiver synchronously: a queued UID toggle could stop
         // a different track if the user switches targets before the broadcast executes.
         tool.getHoundReceiver().onReceive(mapView.getContext(),

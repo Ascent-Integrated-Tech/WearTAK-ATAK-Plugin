@@ -49,8 +49,12 @@ public class BloodhoundSyncTest {
     private final BloodhoundSync sync = new BloodhoundSync(port);
 
     private JSONObject request(String action, String id, String uid) {
-        return BloodhoundSync.envelope("bloodhound_control",
-                BloodhoundSync.command(action, id, uid));
+        try {
+            return BloodhoundSync.envelope("bloodhound_control",
+                    BloodhoundSync.command(action, id, uid).put("lat", 38.5).put("lon", -77.2));
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
     }
 
     private String startNative(String uid) {
@@ -107,6 +111,67 @@ public class BloodhoundSyncTest {
         assertEquals(2, port.sent.size());
         assertEquals(1, port.starts);
         assertEquals(1, port.stops);
+    }
+
+    @Test public void garminCommandResultEchoesCompleteWireIdentity() throws Exception {
+        String id = UUID.randomUUID().toString();
+        String commandId = UUID.randomUUID().toString();
+        JSONObject p = BloodhoundSync.command("start", id, "alert-1")
+                .put("relaySession", "phone-link")
+                .put("bloodhoundVersion", 1)
+                .put("command_id", commandId)
+                .put("target_callsign", "Rescue")
+                .put("lat", 34.0).put("lon", -117.0);
+        sync.receive(BloodhoundSync.envelope("bloodhound_control", p));
+        JSONObject result = port.sent.get(0).optJSONObject("payload");
+        assertEquals(id, result.optString("session_id"));
+        assertEquals(commandId, result.optString("command_id"));
+        assertEquals("phone-link", result.optString("relaySession"));
+        assertEquals(1, result.optInt("bloodhoundVersion"));
+        assertEquals("alert-1", result.optString("target_uid"));
+        assertEquals("start", result.optString("action"));
+        assertTrue(result.optBoolean("ok"));
+    }
+
+    @Test public void concurrentGarminCommandWithDifferentIdIsRejectedWithoutReplacingPending() throws Exception {
+        port.asynchronous = true;
+        String sessionId = UUID.randomUUID().toString();
+        String commandId = UUID.randomUUID().toString();
+        JSONObject first = BloodhoundSync.command("start", sessionId, "alert-1")
+                .put("relaySession", "phone-link")
+                .put("bloodhoundVersion", 1).put("command_id", commandId)
+                .put("lat", 38.5).put("lon", -77.2);
+        sync.receive(BloodhoundSync.envelope("bloodhound_control", first));
+        JSONObject replacement = new JSONObject(first.toString())
+                .put("command_id", UUID.randomUUID().toString());
+        sync.receive(BloodhoundSync.envelope("bloodhound_control", replacement));
+        assertEquals(1, port.starts);
+        assertResult(false);
+        assertEquals(replacement.optString("command_id"),
+                port.sent.get(port.sent.size() - 1).optJSONObject("payload").optString("command_id"));
+        sync.timeout(sessionId, "start");
+        assertResult(false);
+    }
+
+    @Test public void garminAcknowledgementMustMatchCommandAndTargetIdentity() throws Exception {
+        String id = startNative("local");
+        JSONObject sent = port.sent.get(0).optJSONObject("payload");
+        sent.put("relaySession", "phone-link");
+        sent.put("bloodhoundVersion", 1);
+        sent.put("command_id", UUID.randomUUID().toString());
+
+        JSONObject stale = BloodhoundSync.command("start", id, "local")
+                .put("relaySession", "phone-link")
+                .put("bloodhoundVersion", 1)
+                .put("command_id", UUID.randomUUID().toString())
+                .put("ok", false).put("error", "stale");
+        sync.receive(BloodhoundSync.envelope("bloodhound_control_result", stale));
+        assertTrue(port.failures.isEmpty());
+
+        JSONObject matching = new JSONObject(sent.toString()).put("ok", true);
+        sync.receive(BloodhoundSync.envelope("bloodhound_control_result", matching));
+        sync.resultTimeout(id, "start");
+        assertTrue(port.failures.isEmpty());
     }
 
     @Test public void staleSessionAndWrongTargetCannotStopCurrentTrack() {
@@ -311,21 +376,26 @@ public class BloodhoundSyncTest {
         assertTrue(port.failures.isEmpty());
     }
 
-    @Test public void updatesRequireMatchingActiveSessionAndNeverRestartOrAck() throws Exception {
+    @Test public void updatesRequireMatchingActiveSessionAndAcknowledgeExplicitly() throws Exception {
         String id = startNative("local");
         JSONObject update = BloodhoundSync.command("update", id, "local")
                 .put("lat", 34).put("lon", -117);
         sync.receive(BloodhoundSync.envelope("bloodhound_control", update));
         assertEquals(1, port.updates);
-        assertEquals(1, port.sent.size());
+        assertEquals(2, port.sent.size());
+        assertResult(true);
         sync.receive(request("update", UUID.randomUUID().toString(), "local"));
         sync.receive(request("update", id, "other"));
         assertEquals(1, port.updates);
+        assertEquals(4, port.sent.size());
+        assertResult(false);
         port.nativeUid = null;
         sync.receive(BloodhoundSync.envelope("bloodhound_control", update));
         assertEquals(1, port.updates);
         assertEquals(0, port.starts);
         assertEquals(0, port.stops);
+        assertEquals(5, port.sent.size());
+        assertResult(false);
     }
 
     @Test public void newSessionOnAlreadyTrackedTargetRefreshesSnapshotButDuplicateDoesNot() {
