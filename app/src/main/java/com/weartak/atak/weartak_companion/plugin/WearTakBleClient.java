@@ -23,6 +23,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Build;
 import android.os.ParcelUuid;
 import android.util.Log;
 
@@ -1474,7 +1475,7 @@ public class WearTakBleClient {
                 && !expectedUid.equals(observedUid);
     }
 
-    private static boolean shouldClearPairedIdentity(String reason) {
+    static boolean shouldClearPairedIdentity(String reason) {
         return reason != null && (reason.startsWith("bond_")
                 || "watch_uid_mismatch".equals(reason));
     }
@@ -1551,6 +1552,7 @@ public class WearTakBleClient {
 
     private String safeGetDeviceAlias(BluetoothDevice d) {
         try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null;
             if (ActivityCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT)
                     != PackageManager.PERMISSION_GRANTED) return null;
             return d.getAlias();
