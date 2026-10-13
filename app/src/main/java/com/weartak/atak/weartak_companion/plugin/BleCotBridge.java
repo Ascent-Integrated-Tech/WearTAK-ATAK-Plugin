@@ -334,6 +334,11 @@ public class BleCotBridge {
     //         b) sendEmergencyCancel() builds the Cancel Alert cot xml event & sends it both externally & internally
     // =========================================================================================
     private void handleEmergencyCot(String envelopeJson) {
+        handleEmergencyCot(envelopeJson, null);
+    }
+
+    /** Uses a supplied valid fix when available; cancellation may use the safe fallback. */
+    private void handleEmergencyCot(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -348,10 +353,10 @@ public class BleCotBridge {
             boolean isCancel = "CANCEL".equalsIgnoreCase(state);
 
             if (isAlert) {
-                sendEmergencyAlert(envelopeJson);
+                sendEmergencyAlert(envelopeJson, fixOverride);
             }
             if (isCancel) {
-                sendEmergencyCancel(envelopeJson);
+                sendEmergencyCancel(envelopeJson, fixOverride);
             }
 
         } catch (Exception e) {
@@ -360,6 +365,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyAlert(String envelopeJson) {
+        sendEmergencyAlert(envelopeJson, null);
+    }
+
+    private void sendEmergencyAlert(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -390,7 +399,7 @@ public class BleCotBridge {
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
 
             // Point: use EUD location
-            EudFix fix = getEudFix();
+            EudFix fix = fixOverride != null ? fixOverride : getEudFix();
 
             StringBuilder detail = new StringBuilder();
             detail.append("<detail>");
@@ -432,6 +441,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyCancel(String envelopeJson) {
+        sendEmergencyCancel(envelopeJson, null);
+    }
+
+    private void sendEmergencyCancel(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -445,9 +458,10 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
+            String callsign  = resolveEmergencyCallsign(
+                    optString(p, "callsign", ""), pluginCallsign);
 
-            EudFix fix = getEudFix();
+            EudFix fix = fixOverride != null ? fixOverride : getEudFix();
 
             String xml =
                     "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
@@ -712,7 +726,19 @@ public class BleCotBridge {
                 sendGarminMarkerDelete(payload);
                 break;
             case "emergency":
-                handleEmergencyCot(envelopeJson);
+                if ("CANCEL".equalsIgnoreCase(payload.optString("state", ""))) {
+                    // A cancel must still clear the alert if the phone has lost its fix.
+                    handleEmergencyCot(envelopeJson, getEudFix());
+                    break;
+                }
+                EudFix phoneFix = getValidEudFix();
+                if (!shouldDispatchGarminEmergency(payload.optString("state", ""), phoneFix != null)) {
+                    Log.w(TAG, "Garmin emergency rejected: no valid phone location (state="
+                            + payload.optString("state", "") + ", uid="
+                            + payload.optString("uid", "") + ")");
+                    break;
+                }
+                handleEmergencyCot(envelopeJson, phoneFix);
                 break;
             case "chat":
                 try {
@@ -734,6 +760,10 @@ public class BleCotBridge {
                 Log.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
                 break;
         }
+    }
+
+    static boolean shouldDispatchGarminEmergency(String state, boolean hasValidFix) {
+        return "CANCEL".equalsIgnoreCase(state) || hasValidFix;
     }
 
     /** Returns a bounded nearest-unit snapshot for Garmin relay requests. */
@@ -802,6 +832,23 @@ public class BleCotBridge {
     // EUD LOCATION HELPERS
     // =========================================================================================
 
+    /** Returns null instead of a 0,0 placeholder when the phone has no usable fix. */
+    private EudFix getValidEudFix() {
+        try {
+            MapView mv = mapView;
+            Marker self = mv == null ? null : mv.getSelfMarker();
+            GeoPoint point = self == null ? null : self.getPoint();
+            if (point == null || !point.isValid()
+                    || !PhoneFixValidator.isUsable(point.getLatitude(), point.getLongitude())) {
+                return null;
+            }
+            return new EudFix(point.getLatitude(), point.getLongitude(), point.getAltitude(), 10.0, 10.0);
+        } catch (Throwable t) {
+            Log.w(TAG, "getValidEudFix: unable to resolve phone position", t);
+            return null;
+        }
+    }
+
     /**
      * Gets current ATAK self marker point; returns safe defaults if unavailable.
      * You can later improve CE/LE extraction if you find the right metadata keys in your build.
@@ -858,6 +905,10 @@ public class BleCotBridge {
     private static String optString(JSONObject o, String k, String def) {
         String v = o.optString(k, null);
         return (v == null || v.isEmpty()) ? def : v;
+    }
+
+    static String resolveEmergencyCallsign(String supplied, String fallback) {
+        return supplied == null || supplied.trim().isEmpty() ? fallback : supplied.trim();
     }
 
     private static int optInt(JSONObject o, String k, int def) {

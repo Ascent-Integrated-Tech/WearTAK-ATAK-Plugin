@@ -159,6 +159,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private static final String SCAN_TEXT_DEFAULT = "Scan for WearTAK Devices";
     private static final String SCAN_TEXT_REFRESH = "Scan again to refresh devices";
     private static final String PREFS_NAME = "weartak_companion_prefs";
+    private static final String LEGACY_PREFS_NAME = "wtk_pairing";
     private static final String KEY_PREF_ADDR = "preferred_device_address";
     private static final String KEY_PREF_NAME = "preferred_device_name";
     private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
@@ -315,7 +316,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         SharedPreferences prefs = systemBondedPreferences();
         String saved = prefs.getString("connection_mode", null);
         if (saved == null) {
-            saved = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            saved = PluginPrefs.get(pluginContext, PREFS_NAME)
                     .getString("connection_mode", null);
         }
         ConnectionModeController.Mode mode = ConnectionModeController.restore(saved,
@@ -562,6 +563,24 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         Context application = context.getApplicationContext();
         return (application != null ? application : context)
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private SharedPreferences pluginPreferences() {
+        SharedPreferences current = PluginPrefs.get(pluginContext, PREFS_NAME);
+        if (!current.contains(KEY_PREF_ADDR)) {
+            SharedPreferences legacy = PluginPrefs.get(pluginContext, LEGACY_PREFS_NAME);
+            if (legacy.contains(KEY_PREF_ADDR)) {
+                SharedPreferences.Editor migration = current.edit()
+                        .putString(KEY_PREF_ADDR, legacy.getString(KEY_PREF_ADDR, ""))
+                        .putString(KEY_PREF_NAME, legacy.getString(KEY_PREF_NAME, ""));
+                if (legacy.contains(KEY_PREF_SET_AT)) {
+                    migration.putLong(KEY_PREF_SET_AT,
+                            legacy.getLong(KEY_PREF_SET_AT, 0L));
+                }
+                migration.apply();
+            }
+        }
+        return current;
     }
 
     private void persistConnectionMode(ConnectionModeController.Mode mode) {
@@ -1609,7 +1628,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (pluginContext == null) return;
         if (address == null || address.trim().isEmpty()) return;
 
-        pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        pluginPreferences()
                 .edit()
                 .putString(KEY_PREF_ADDR, address.trim())
                 .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
@@ -1620,7 +1639,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void clearPreferredDevice(String address) {
         if (pluginContext == null) return;
 
-        SharedPreferences prefs = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = pluginPreferences();
         String current = prefs.getString(KEY_PREF_ADDR, null);
         if (address != null) {
             if (current == null) return;
@@ -1637,7 +1656,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredAddress() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = pluginPreferences()
                 .getString(KEY_PREF_ADDR, null);
         if (v == null) return null;
         v = v.trim();
@@ -1646,7 +1665,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredName() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = pluginPreferences()
                 .getString(KEY_PREF_NAME, null);
         if (v == null) return null;
         v = v.trim();
