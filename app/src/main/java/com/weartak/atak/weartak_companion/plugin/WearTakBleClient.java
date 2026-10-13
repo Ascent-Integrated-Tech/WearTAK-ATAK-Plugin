@@ -455,6 +455,10 @@ public class WearTakBleClient {
         if (owned) cancelReconnectLoop("external reconnect owner");
     }
 
+    boolean isExternalReconnectOwner() {
+        return externalReconnectOwner;
+    }
+
     public synchronized void resetSession(String reason) {
         logI("resetSession(): " + reason);
         cancelReconnectLoop("resetSession: " + reason);

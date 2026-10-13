@@ -531,7 +531,7 @@ public class BleCotBridge {
             // Sender callsign comes from payload.cs in your earlier watch examples
             // (Your stub used "cs", not "callsign".)
             String senderCallsign = optString(p, "cs",
-                    optString(p, "callsign", "WEAROS-TEST"));
+                    optString(p, "callsign", pluginCallsign));
 
             // Time/stale fields match your watch schema
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
@@ -752,9 +752,6 @@ public class BleCotBridge {
                 } catch (JSONException e) {
                     Log.e(TAG, "Could not adapt Garmin chat message", e);
                 }
-                break;
-            case "entity_sync_request":
-                Log.i(TAG, "Garmin requested an ATAK entity snapshot");
                 break;
             default:
                 Log.w(TAG, "Ignoring unsupported Garmin message: " + msgType);

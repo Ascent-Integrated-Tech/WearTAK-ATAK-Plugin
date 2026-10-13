@@ -534,6 +534,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         @Override public void onStatus(String message) {
                             if (!connectionModes.isCurrent(token)) return;
                             if (systemBondedWatchStatus != null) systemBondedWatchStatus.setText(message);
+                            if (connectionModeAdvisory != null
+                                    && message != null
+                                    && message.contains("Multiple bonded WearTAK watches")) {
+                                connectionModeAdvisory.setText(
+                                        "Multiple bonded WearTAK watches found. Select the intended watch in Traditional BLE mode, then return to Samsung mode.");
+                            }
                             if (connectionStatusTV != null && systemBondedEnabled) {
                                 connectionStatusTV.setText(message);
                             }
@@ -609,8 +615,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         emptyState.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL
                 && scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
         systemBondedWatchStatus.setVisibility(mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
-        paneView.findViewById(R.id.garminPanel).setVisibility(
-                mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
+        View garminPanel = paneView.findViewById(R.id.garminPanel);
+        if (garminPanel != null) {
+            garminPanel.setVisibility(
+                    mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
+        }
         if (connectionStatusTV != null) {
             connectionStatusTV.setText(mode == ConnectionModeController.Mode.GARMIN
                     ? garminClient != null ? garminClient.getStatus() : "Garmin Connect IQ is off."

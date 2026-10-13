@@ -42,4 +42,14 @@ public class WearTakBleClientTest {
         assertFalse(WearTakBleClient.shouldClearPairedIdentity("gatt_status_133"));
         assertFalse(WearTakBleClient.shouldClearPairedIdentity(null));
     }
+
+    @Test
+    public void externalReconnectOwnerCanBeEnabledAndReleased() {
+        WearTakBleClient client = new WearTakBleClient(null, connected -> { });
+        assertFalse(client.isExternalReconnectOwner());
+        client.setExternalReconnectOwner(true);
+        assertTrue(client.isExternalReconnectOwner());
+        client.setExternalReconnectOwner(false);
+        assertFalse(client.isExternalReconnectOwner());
+    }
 }
