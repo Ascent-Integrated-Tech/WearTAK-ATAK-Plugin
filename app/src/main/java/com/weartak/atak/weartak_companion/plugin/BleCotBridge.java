@@ -8,17 +8,25 @@ import android.util.Log;
 
 import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
+import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.Marker;
+import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.comms.CotDispatcher;
 import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 public class BleCotBridge {
@@ -679,6 +687,115 @@ public class BleCotBridge {
         } catch (Exception e) {
             Log.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
         }
+    }
+
+    /** Handles messages received from the Garmin Connect IQ relay. */
+    public void handleGarminMessage(JSONObject envelope) {
+        if (envelope == null) return;
+        String msgType = envelope.optString("msgType", "").trim();
+        JSONObject payload = envelope.optJSONObject("payload");
+        if (msgType.isEmpty() || payload == null) {
+            Log.w(TAG, "handleGarminMessage: missing msgType or payload");
+            return;
+        }
+
+        String envelopeJson = envelope.toString();
+        switch (msgType) {
+            case "relay_hello":
+                Log.i(TAG, "Garmin watch relay connected: "
+                        + payload.optString("watchLabel", "Garmin watch"));
+                break;
+            case "marker":
+                sendMarkerCot(envelopeJson);
+                break;
+            case "marker_delete":
+                sendGarminMarkerDelete(payload);
+                break;
+            case "emergency":
+                handleEmergencyCot(envelopeJson);
+                break;
+            case "chat":
+                try {
+                    if (!payload.has("msg") && payload.has("text")) {
+                        payload.put("msg", payload.optString("text", ""));
+                    }
+                    if (!payload.has("cs")) payload.put("cs", pluginCallsign);
+                    if (!payload.has("roomUid")) payload.put("roomUid", "All Chat Rooms");
+                    if (!payload.has("roomTitle")) payload.put("roomTitle", "All Chat Rooms");
+                    sendChat(envelope.toString());
+                } catch (JSONException e) {
+                    Log.e(TAG, "Could not adapt Garmin chat message", e);
+                }
+                break;
+            case "entity_sync_request":
+                Log.i(TAG, "Garmin requested an ATAK entity snapshot");
+                break;
+            default:
+                Log.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
+                break;
+        }
+    }
+
+    /** Returns a bounded nearest-unit snapshot for Garmin relay requests. */
+    public List<Map<String, Object>> getGarminEntitySnapshot(int requestedLimit) {
+        int limit = Math.max(1, Math.min(requestedLimit, 50));
+        ArrayList<Map<String, Object>> entities = new ArrayList<>();
+        MapView mv = mapView;
+        if (mv == null || mv.getRootGroup() == null) return entities;
+
+        Collection<MapItem> items = mv.getRootGroup().getItemsRecursive();
+        if (items == null) return entities;
+        GeoPoint self = mv.getSelfMarker() == null ? null : mv.getSelfMarker().getPoint();
+        if (self == null || !self.isValid()
+                || !PhoneFixValidator.isUsable(self.getLatitude(), self.getLongitude())) {
+            return entities;
+        }
+
+        ArrayList<double[]> distances = new ArrayList<>();
+        for (MapItem item : items) {
+            if (!(item instanceof PointMapItem)) continue;
+            String uid = item.getUID();
+            String type = item.getType();
+            if (uid == null || uid.isEmpty() || uid.equals(myUid)
+                    || type == null || !type.startsWith("a-")) continue;
+            GeoPoint point = ((PointMapItem) item).getPoint();
+            if (point == null || !point.isValid()) continue;
+            Map<String, Object> entity = new HashMap<>();
+            entity.put("uid", uid);
+            entity.put("lat", point.getLatitude());
+            entity.put("lon", point.getLongitude());
+            entity.put("type", type);
+            entities.add(entity);
+            distances.add(new double[]{self.distanceTo(point), entities.size() - 1});
+        }
+
+        distances.sort((a, b) -> Double.compare(a[0], b[0]));
+        ArrayList<Map<String, Object>> nearest = new ArrayList<>();
+        for (int i = 0; i < distances.size() && nearest.size() < limit; i++) {
+            nearest.add(entities.get((int) distances.get(i)[1]));
+        }
+        return nearest;
+    }
+
+    private void sendGarminMarkerDelete(JSONObject payload) {
+        String markerUid = optString(payload, "uid", null);
+        if (markerUid == null) {
+            Log.w(TAG, "sendGarminMarkerDelete: missing marker uid");
+            return;
+        }
+        EudFix fix = getEudFix();
+        String now = iso8601(System.currentTimeMillis());
+        String stale = iso8601(System.currentTimeMillis() + 120_000);
+        String deleteUid = "garmin-delete-" + UUID.randomUUID();
+        String xml = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+                + "<event version='2.0' uid='" + escapeXml(deleteUid) + "' type='t-x-d-d' "
+                + "time='" + escapeXml(now) + "' start='" + escapeXml(now)
+                + "' stale='" + escapeXml(stale) + "' how='h-g-i-g-o'>"
+                + "<point lat='" + trimDouble(fix.lat) + "' lon='" + trimDouble(fix.lon)
+                + "' hae='" + trimDouble(fix.hae) + "' ce='" + trimDouble(fix.ce)
+                + "' le='" + trimDouble(fix.le) + "'/><detail><link uid='"
+                + escapeXml(markerUid) + "'/></detail></event>";
+        dispatchCot("Garmin marker delete", xml);
     }
 
     // =========================================================================================

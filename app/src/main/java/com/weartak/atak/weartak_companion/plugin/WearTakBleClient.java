@@ -81,6 +81,8 @@ public class WearTakBleClient {
     private volatile boolean started = false;
     private volatile boolean scanning = false;
     private volatile boolean connected = false;
+    /** True while an external mode coordinator owns reconnect decisions. */
+    private volatile boolean externalReconnectOwner = false;
 
     private final LinkedHashMap<String, DiscoveredDevice> discovered = new LinkedHashMap<>();
 
@@ -305,6 +307,104 @@ public class WearTakBleClient {
         void onScanError(String msg);
     }
 
+    public interface BondedCompanionListener {
+        void onFound(DiscoveredDevice device);
+        void onUnavailable(String reason);
+
+        default void onAmbiguous(List<DiscoveredDevice> devices) {
+            onUnavailable("Multiple bonded WearTAK watches are available");
+        }
+    }
+
+    public synchronized void findBondedCompanion(BondedCompanionListener listener) {
+        if (listener == null) return;
+        if (!started) start();
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+            listener.onUnavailable("Bluetooth disabled");
+            return;
+        }
+
+        String preferredAddress = getPreferredAddress();
+        if (preferredAddress != null) {
+            try {
+                BluetoothDevice preferred = bluetoothAdapter.getRemoteDevice(preferredAddress);
+                if (isBonded(preferred)) {
+                    listener.onFound(new DiscoveredDevice(
+                            safeGetDeviceName(preferred), preferredAddress, 0));
+                    return;
+                }
+            } catch (IllegalArgumentException ignored) {
+                logW("Saved companion address is invalid");
+            }
+        }
+
+        AtomicBoolean completed = new AtomicBoolean(false);
+        scanForDevices(new ScanListener() {
+            @Override public void onDeviceFound(DiscoveredDevice device) { }
+
+            @Override public void onScanFinished(List<DiscoveredDevice> devices) {
+                if (!completed.compareAndSet(false, true)) return;
+                List<DiscoveredDevice> candidates = bondedCandidates(devices);
+                if (candidates.size() == 1) {
+                    DiscoveredDevice selected = candidates.get(0);
+                    savePreferredAddress(selected.address);
+                    listener.onFound(selected);
+                } else if (candidates.size() > 1) {
+                    listener.onAmbiguous(candidates);
+                } else {
+                    listener.onUnavailable("No paired WearTAK watch is reachable");
+                }
+            }
+
+            @Override public void onScanError(String msg) {
+                if (completed.compareAndSet(false, true)) listener.onUnavailable(msg);
+            }
+        });
+    }
+
+    private List<DiscoveredDevice> bondedCandidates(List<DiscoveredDevice> devices) {
+        List<DiscoveredDevice> candidates = new ArrayList<>();
+        if (devices == null) return candidates;
+        for (DiscoveredDevice device : devices) {
+            if (device == null || device.address == null || !isBondedAddress(device.address)) continue;
+            boolean duplicate = false;
+            for (DiscoveredDevice candidate : candidates) {
+                if (device.address.equals(candidate.address)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) candidates.add(device);
+        }
+        return candidates;
+    }
+
+    public synchronized DiscoveredDevice getKnownBondedCompanion() {
+        if (!started) start();
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) return null;
+        String address = getPreferredAddress();
+        if (address == null) return null;
+        try {
+            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
+            if (isBonded(device)) {
+                return new DiscoveredDevice(safeGetDeviceName(device), address, 0);
+            }
+            clearPreferredAddressIfMatches(address);
+        } catch (IllegalArgumentException | SecurityException e) {
+            logW("Unable to check known bonded WearTAK candidate");
+        }
+        return null;
+    }
+
+    private boolean isBondedAddress(String address) {
+        try {
+            return bluetoothAdapter != null && isBonded(bluetoothAdapter.getRemoteDevice(address));
+        } catch (IllegalArgumentException e) {
+            logW("Ignoring invalid Bluetooth address during companion discovery");
+            return false;
+        }
+    }
+
     public int timeoutSeconds = 30;
 
     // -------------------- lifecycle --------------------
@@ -347,6 +447,12 @@ public class WearTakBleClient {
         bluetoothAdapter = null;
         scanner = null;
         setConnected(false);
+    }
+
+    /** Prevents the internal reconnect loop from competing with a mode coordinator. */
+    public synchronized void setExternalReconnectOwner(boolean owned) {
+        externalReconnectOwner = owned;
+        if (owned) cancelReconnectLoop("external reconnect owner");
     }
 
     public synchronized void resetSession(String reason) {
@@ -508,6 +614,10 @@ public class WearTakBleClient {
     // -------------------- selection / connect --------------------
 
     public synchronized void connectToSelectedDevice(DiscoveredDevice device) {
+        connectToSelectedDevice(device, true);
+    }
+
+    public synchronized void connectToSelectedDevice(DiscoveredDevice device, boolean allowBondCreation) {
         if (device == null || device.address == null) return;
         if (!started) start();
 
@@ -535,6 +645,10 @@ public class WearTakBleClient {
         }
 
         if (!isBonded(remote)) {
+            if (!allowBondCreation) {
+                error("System Bonded Watch requires an existing system bond.");
+                return;
+            }
             pendingBondDevice = device;
             boolean bondStarted = false;
             try {
@@ -844,6 +958,7 @@ public class WearTakBleClient {
     }
 
     private boolean canAutoReconnect() {
+        if (externalReconnectOwner) return false;
         if (!started) return false;
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) return false;
         if (!isAutoReconnectEnabled() || !isReconnectArmed()) return false;
@@ -1565,6 +1680,21 @@ public class WearTakBleClient {
         if (alias != null && !alias.trim().isEmpty()) return alias.trim();
         String name = safeGetDeviceName(d);
         return name == null || name.trim().isEmpty() ? null : name.trim();
+    }
+
+    public synchronized String describeBondedWatch(String address) {
+        String alias = null;
+        String model = null;
+        if (bluetoothAdapter != null && address != null) {
+            try {
+                BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
+                alias = safeGetDeviceAlias(device);
+                model = safeGetDeviceName(device);
+            } catch (IllegalArgumentException ignored) {
+                logW("Unable to describe bonded watch: invalid address");
+            }
+        }
+        return SystemBondedWatchConnection.describeBondedWatch(alias, model, address);
     }
 
     private String normalizeWearTakName(String value) {

@@ -107,6 +107,10 @@ android {
     compileSdk 35
     namespace 'com.weartak.atak.weartak_companion.plugin'
 
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     buildFeatures {
         buildConfig = true
     }
@@ -291,6 +295,8 @@ dependencies {
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20231013'
+
+    implementation "com.garmin.connectiq:ciq-companion-app-sdk:2.4.0@aar"
 
     // This is likely pulling in appcompat transitively depending on your environment.
     implementation("com.google.android.gms:play-services-wearable:18.1.0") {
